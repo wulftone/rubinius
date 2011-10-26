@@ -529,6 +529,62 @@ namespace tier1 {
       set_stack_top(rax);
     }
 
+    void visit_meta_send_op_equal(opcode name) {
+      InlineCache* cache = reinterpret_cast<InlineCache*>(name);
+
+      _.mov(scratch, stack_back_position(1));
+      load_stack_top(scratch2);
+
+      _.mov(arg1, scratch);
+      _.or_(arg1, scratch2);
+      _.and_(arg1, 3);
+
+      _.cmp(arg1, 0);
+
+      Label use_cache = _.newLabel();
+      Label done = _.newLabel();
+
+      _.je(use_cache);
+
+      _.mov(rax, (sysint_t)Qfalse);
+      _.cmp(scratch, scratch2);
+      _.cmove(rax, (sysint_t)Qtrue);
+
+      stack_remove(1);
+      set_stack_top(rax);
+
+      _.jmp(done);
+      _.bind(use_cache);
+
+      _.mov(scratch, stack_back_position(1));
+      _.mov(fr(cOutArgsOffset + offset::Arguments::recv), scratch);
+
+      _.mov(fr(cOutArgsOffset + offset::Arguments::block), (sysint_t)Qnil);
+      _.mov(fr(cOutArgsOffset + offset::Arguments::total), (sysint_t)1);
+      _.mov(fr(cOutArgsOffset + offset::Arguments::container), (sysint_t)Qnil);
+
+      _.lea(scratch, stack_back_position(0));
+      _.mov(fr(cOutArgsOffset + offset::Arguments::arguments), scratch);
+
+      load_vm(arg1);
+      _.mov(arg2, (sysint_t)cache);
+      _.mov(scratch, p(arg2, offset::InlineCache:execute));
+      load_callframe(arg3);
+      load_outargs(arg4);
+
+      _.call(scratch);
+      stack_remove(1);
+
+      _.cmp(rax, 0);
+      _.je(exit_label);
+
+
+
+
+      _.bind(done);
+
+    }
+
   };
 
   bool Compiler::compile(STATE) {

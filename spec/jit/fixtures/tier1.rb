@@ -15,5 +15,17 @@ module JITSpecs
     def str_build(obj)
       "-#{obj}-"
     end
+
+    dynamic_method :check_frozen do |g|
+      g.push :self
+      g.check_frozen
+      g.pop
+      g.push :nil
+      g.ret
+    end
+
+    def equal_compare(a, b)
+      a == b
+    end
   end
 end
