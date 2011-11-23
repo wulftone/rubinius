@@ -20,6 +20,9 @@ module Rubinius
       @simple_options = false
       @early_option_stop = false
 
+      @enable_gems = Rubinius.ruby19?
+      @load_gemfile = false
+
       @gem_bin = File.join Rubinius::GEMS_PATH, "bin"
     end
 
@@ -285,10 +288,20 @@ containing the Rubinius standard library files.
         $DEBUG = true
       end
 
+      if Rubinius.ruby19?
+        options.on "--disable-gems", "Do not automatically load rubygems on startup" do
+          @enable_gems = false
+        end
+      end
+
       options.on "-e", "CODE", "Compile and execute CODE" do |code|
         @run_irb = false
         $0 = "(eval)"
         @evals << code
+      end
+
+      options.on '-G', '--gemfile', 'Respect a Gemfile in the current path' do
+        @load_gemfile = true
       end
 
       options.on "-h", "--help", "Display this help" do
@@ -569,7 +582,16 @@ to rebuild the compiler.
     def rubygems
       @stage = "loading Rubygems"
 
-      require "rubygems" if Rubinius.ruby19?
+      require "rubygems" if @enable_gems
+    end
+
+    def gemfile
+      @stage = "loading Gemfile"
+
+      if @load_gemfile
+        require 'rubygems' unless @enable_gems
+        require 'bundler/setup'
+      end
     end
 
     # Require any -r arguments
@@ -775,6 +797,7 @@ to rebuild the compiler.
           debugger
           agent
           rubygems
+          gemfile
           requires
           evals
           script

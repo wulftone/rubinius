@@ -48,6 +48,7 @@
 #include "builtin/float.hpp"
 #include "builtin/methodtable.hpp"
 #include "builtin/io.hpp"
+#include "builtin/thread.hpp"
 
 #include "builtin/staticscope.hpp"
 #include "builtin/block_environment.hpp"
@@ -375,9 +376,11 @@ namespace rubinius {
       options |= WNOHANG;
     }
 
-    sig_t hup_func;
-    sig_t quit_func;
-    sig_t int_func;
+    typedef void (*rbx_sighandler_t)(int);
+
+    rbx_sighandler_t hup_func;
+    rbx_sighandler_t quit_func;
+    rbx_sighandler_t int_func;
 
   retry:
 
@@ -430,7 +433,7 @@ namespace rubinius {
     return NULL;
   }
 
-  Fixnum* System::vm_fork(STATE, CallFrame* calling_environment)
+  Fixnum* System::vm_fork(STATE, GCToken gct, CallFrame* calling_environment)
   {
 #ifdef RBX_WINDOWS
     // TODO: Windows
@@ -445,6 +448,13 @@ namespace rubinius {
     }
 #endif
 
+    /*
+     * We have to bring all the threads to a safe point before we can
+     * fork the process so any internal locks are unlocked before we fork
+     */
+
+    StopTheWorld stw(state, gct, calling_environment);
+
     // ok, now fork!
     result = ::fork();
 
@@ -452,6 +462,7 @@ namespace rubinius {
     if(result == 0) {
       /*  @todo any other re-initialisation needed? */
 
+      state->vm()->thread->init_lock();
       state->shared().reinit(state);
       state->shared().om->on_fork(state);
       SignalHandler::on_fork(state, false);

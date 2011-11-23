@@ -97,10 +97,8 @@ class MSpecScript
     '^spec/ruby/library/logger',
     '^spec/ruby/library/net',
     '^spec/ruby/library/uri',
-    '^spec/ruby/library/yaml',
     '^spec/ruby/library/zlib',
 
-    '^spec/ruby/optional/capi/class',
     '^spec/ruby/optional/capi/io',
     '^spec/ruby/optional/capi/time',
 

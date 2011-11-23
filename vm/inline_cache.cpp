@@ -23,18 +23,9 @@ namespace rubinius {
     Module* module = klass;
 
     // Check the global cache first!
-    GlobalCache::cache_entry* global_entry =
-      state->vm()->global_cache()->lookup(state, module, name);
+    mce = state->vm()->global_cache()->lookup_public(state, module, klass, name);
 
-    if(global_entry &&
-         global_entry->is_public &&
-        !global_entry->method_missing) {
-
-      mce = MethodCacheEntry::create(state, klass, global_entry->module,
-                                     global_entry->method);
-
-      return eNone;
-    }
+    if(mce) return eNone;
 
     bool skip_vis_check = false;
 
@@ -135,14 +126,8 @@ namespace rubinius {
     Module* module = start;
 
     // Check the global cache first!
-    GlobalCache::cache_entry* global_entry =
-      state->vm()->global_cache()->lookup(state, module, name);
-
-    if(global_entry && !global_entry->method_missing) {
-      mce = MethodCacheEntry::create(state, klass, global_entry->module,
-                                     global_entry->method);
-      return true;
-    }
+    mce = state->vm()->global_cache()->lookup_private(state, start, klass, name);
+    if(mce) return true;
 
     MethodTableBucket* vis_entry = 0;
 
@@ -480,7 +465,6 @@ namespace rubinius {
       // github#157
       if(!cache->fill_method_missing(state, recv_class, mce)) {
         Exception::internal_error(state, call_frame, "no method_missing");
-        cache->private_lock_ = 0;
         return 0;
       }
 
@@ -512,7 +496,8 @@ namespace rubinius {
     MethodCacheEntry* mce = cache->cache_;
 
     args.set_name(cache->name);
-    if(likely(mce && args.recv()->fixnum_p())) {
+    if(likely(mce && mce->receiver_class() == G(fixnum_class)
+                  && args.recv()->fixnum_p())) {
 
       Executable* meth = mce->method();
       Module* mod = mce->stored_module();
@@ -529,7 +514,8 @@ namespace rubinius {
     MethodCacheEntry* mce = cache->cache_;
 
     args.set_name(cache->name);
-    if(likely(mce && args.recv()->symbol_p())) {
+    if(likely(mce && mce->receiver_class() == G(symbol)
+                  && args.recv()->symbol_p())) {
 
       Executable* meth = mce->method();
       Module* mod = mce->stored_module();
@@ -617,13 +603,13 @@ namespace rubinius {
       // potentially room for registering another class,
       // so we should lock it here before we're allowed to write it.
 
-      while(!atomic::compare_and_swap(&private_lock_, 0, 1));
+      private_lock_.lock();
 
       for(int i = 0; i < cTrackedICHits; i++) {
         if(!seen_classes_[i].klass()) {
           // An empty space, record it.
           seen_classes_[i].assign(mce->receiver_class());
-          private_lock_ = 0;
+          private_lock_.unlock();
           return;
         }
       }
@@ -632,7 +618,7 @@ namespace rubinius {
     // Hmmm, what do we do when this is full? Just ignore them?
     // For now, just keep track of how many times we overflow.
     seen_classes_overflow_++;
-    private_lock_ = 0;
+    private_lock_.unlock();
   }
 
   void InlineCache::print_location(STATE, std::ostream& stream) {

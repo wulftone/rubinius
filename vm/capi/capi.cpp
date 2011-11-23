@@ -14,6 +14,7 @@
 #include "builtin/block_environment.hpp"
 #include "builtin/proc.hpp"
 
+#include "configuration.hpp"
 #include "lookup_data.hpp"
 #include "dispatch.hpp"
 #include "arguments.hpp"
@@ -47,6 +48,8 @@ namespace rubinius {
      */
     std::string& capi_get_constant_name(int type) {
       static CApiConstantNameMap map;
+
+      NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
       if(map.empty()) {
         map.resize(cCApiMaxConstant + 1);
@@ -83,6 +86,8 @@ namespace rubinius {
         map[cCApiGC]         = "GC";
         map[cCApiCAPI]       = "Rubinius::CAPI";
         map[cCApiMethod]     = "Method";
+        map[cCApiRational]   = "Rational";
+        map[cCApiComplex]    = "Complex";
 
         map[cCApiArgumentError]       = "ArgumentError";
         map[cCApiEOFError]            = "EOFError";
@@ -113,10 +118,13 @@ namespace rubinius {
         map[cCApiTypeError]           = "TypeError";
         map[cCApiThreadError]         = "ThreadError";
         map[cCApiZeroDivisionError]   = "ZeroDivisionError";
+
+        if(!LANGUAGE_18_ENABLED(env->state())) {
+          map[cCApiMathDomainError]     = "Math::DomainError";
+        }
       }
 
       if(type < 0 || type >= cCApiMaxConstant) {
-        NativeMethodEnvironment* env = NativeMethodEnvironment::get();
         rb_raise(env->get_handle(env->state()->globals().exception.get()),
               "C-API: invalid constant index");
       }
@@ -202,6 +210,48 @@ namespace rubinius {
       env->state()->vm()->shared.enter_capi(env->state());
 
       env->update_cached_data();
+
+      // An exception occurred
+      if(!ret) env->current_ep()->return_to(env);
+
+      return ret_handle;
+    }
+
+    VALUE capi_fast_call(VALUE receiver, ID method_name, int arg_count, ...) {
+      NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+      va_list varargs;
+      va_start(varargs, arg_count);
+
+      Object** args = reinterpret_cast<Object**>(
+                        alloca(sizeof(Object*) * arg_count));
+
+      for(int i = 0; i < arg_count; i++) {
+        args[i] = env->get_object(va_arg(varargs, VALUE));
+      }
+
+      va_end(varargs);
+
+      // Unlock, we're leaving extension code.
+      env->state()->vm()->shared.leave_capi(env->state());
+
+      Object* recv = env->get_object(receiver);
+      Symbol* method = (Symbol*)method_name;
+
+      LookupData lookup(recv, recv->lookup_begin(env->state()), true);
+      Arguments args_o(method, recv, RBX_Qnil, arg_count, args);
+      Dispatch dis(method);
+
+      Object* ret = dis.send(env->state(), env->current_call_frame(),
+                             lookup, args_o);
+
+      // We need to get the handle for the return value before getting
+      // the GEL so that ret isn't accidentally GCd while we wait.
+      VALUE ret_handle = 0;
+      if(ret) ret_handle = env->get_handle(ret);
+
+      // Re-entering extension code
+      env->state()->vm()->shared.enter_capi(env->state());
 
       // An exception occurred
       if(!ret) env->current_ep()->return_to(env);

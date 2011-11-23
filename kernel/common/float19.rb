@@ -2,6 +2,8 @@ class Float
   INFINITY = 1.0 / 0.0
   NAN = 0.0 / 0.0
 
+  alias_method :magnitude, :abs
+
   def imaginary
     0
   end
@@ -33,4 +35,11 @@ class Float
 
     (f * (RADIX ** e)).to_r
   end
+
+  def arg
+    return self if nan?
+    super
+  end
+  alias_method :angle, :arg
+  alias_method :phase, :arg
 end

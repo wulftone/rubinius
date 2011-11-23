@@ -110,8 +110,14 @@ namespace rubinius {
     // Rubinius.primitive :variable_scope_current
     static VariableScope* current(STATE, CallFrame* calling_environment);
 
+    // Rubinius.primitive :variable_scope_synthesize
+    static VariableScope* synthesize(STATE, CompiledMethod* method, Module* module, Object* parent, Object* self, Object* block, Tuple* locals);
+
     // Rubinius.primitive :variable_scope_locals
     Tuple* locals(STATE);
+
+    // Rubinius.primitive :variable_scope_set_local
+    Object* set_local_prim(STATE, Fixnum* number, Object* object);
 
     // Rubinius.primitive :variable_scope_method_visibility
     Object* method_visibility(STATE);
