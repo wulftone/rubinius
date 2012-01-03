@@ -21,6 +21,20 @@ module Kernel
   end
   module_function :loop
 
+  def rand(limit=0)
+    limit = Integer(limit).abs
+
+    case limit
+    when 0
+      Rubinius::Randomizer.instance.random_float
+    when Integer
+      Rubinius::Randomizer.instance.random_integer(limit - 1)
+    else
+      raise TypeError, "Integer() returned a non-integer"
+    end
+  end
+  module_function :rand
+
   def Integer(obj)
     case obj
     when Integer
@@ -52,6 +66,17 @@ module Kernel
   end
   module_function :Integer
 
+  def open(path, *rest, &block)
+    path = StringValue(path)
+
+    if path.kind_of? String and path.prefix? '|'
+      return IO.popen(path[1..-1], *rest, &block)
+    end
+
+    File.open(path, *rest, &block)
+  end
+  module_function :open
+  
   alias_method :proc, :lambda
   module_function :proc
 
@@ -70,7 +95,7 @@ module Kernel
     return str
   end
   module_function :String
-  
+
   def Array(obj)
     ary = Rubinius::Type.check_convert_type obj, Array, :to_ary
 
@@ -83,7 +108,7 @@ module Kernel
     end
   end
   module_function :Array
-  
+
   def Float(obj)
     raise TypeError, "can't convert nil into Float" if obj.nil?
 
@@ -108,5 +133,5 @@ module Kernel
     end
   end
   module_function :Float
-  
+
 end

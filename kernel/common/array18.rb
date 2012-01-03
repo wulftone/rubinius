@@ -225,6 +225,12 @@ class Array
     at Kernel.rand(size)
   end
 
+  # Returns a copy of self with all nil elements removed
+  def compact
+    out = dup
+    out.compact! || out
+  end
+
   # Appends the elements in the other Array to self
   def concat(other)
     Rubinius.primitive :array_concat
@@ -475,6 +481,14 @@ class Array
     concat args
   end
 
+  # Returns a new Array by removing items from self for
+  # which block is true. An Array is also returned when
+  # invoked on subclasses. See #reject!
+  def reject(&block)
+    return to_enum(:reject) unless block_given?
+    dup.delete_if(&block)
+  end
+
   # Replaces contents of self with contents of other,
   # adjusting size as needed.
   def replace(other)
@@ -490,6 +504,11 @@ class Array
 
   alias_method :initialize_copy, :replace
   private :initialize_copy
+
+  # Returns a new array with elements of this array shuffled.
+  def shuffle
+    dup.shuffle!
+  end
 
   # Deletes the element(s) given by an index (optionally with a length)
   # or by a range. Returns the deleted object, subarray, or nil if the

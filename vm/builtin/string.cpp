@@ -1,14 +1,18 @@
+#include "oniguruma.h" // Must be first.
+#include "regenc.h"
+
 #include "builtin/string.hpp"
+#include "builtin/array.hpp"
 #include "builtin/bytearray.hpp"
 #include "builtin/class.hpp"
+#include "builtin/encoding.hpp"
 #include "builtin/exception.hpp"
 #include "builtin/fixnum.hpp"
-#include "builtin/symbol.hpp"
 #include "builtin/float.hpp"
 #include "builtin/integer.hpp"
-#include "builtin/tuple.hpp"
-#include "builtin/array.hpp"
 #include "builtin/regexp.hpp"
+#include "builtin/symbol.hpp"
+#include "builtin/tuple.hpp"
 
 #include "configuration.hpp"
 #include "vm.hpp"
@@ -28,6 +32,8 @@
 #include <ctype.h>
 #include <stdint.h>
 
+#include <sstream>
+
 namespace rubinius {
 
   void String::init(STATE) {
@@ -36,7 +42,7 @@ namespace rubinius {
   }
 
   /* Creates a String instance with +num_bytes+ == +size+ and
-   * having a CharArray with at least (size + 1) bytes.
+   * having a ByteArray with at least (size + 1) bytes.
    */
   String* String::create(STATE, Fixnum* size) {
     String *so;
@@ -44,12 +50,11 @@ namespace rubinius {
     so = state->new_object<String>(G(string));
 
     so->num_bytes(state, size);
-    so->encoding(state, Qnil);
     so->hash_value(state, nil<Fixnum>());
     so->shared(state, Qfalse);
 
     native_int bytes = size->to_native() + 1;
-    CharArray* ba = CharArray::create(state, bytes);
+    ByteArray* ba = ByteArray::create(state, bytes);
     ba->raw_bytes()[bytes-1] = 0;
 
     so->data(state, ba);
@@ -63,11 +68,10 @@ namespace rubinius {
     so = state->new_object<String>(G(string));
 
     so->num_bytes(state, Fixnum::from(0));
-    so->encoding(state, Qnil);
     so->hash_value(state, nil<Fixnum>());
     so->shared(state, Qfalse);
 
-    CharArray* ba = CharArray::create(state, bytes+1);
+    ByteArray* ba = ByteArray::create(state, bytes+1);
     ba->raw_bytes()[bytes] = 0;
 
     so->data(state, ba);
@@ -77,7 +81,7 @@ namespace rubinius {
 
   /*
    * Creates a String instance with +num_bytes+ bytes of storage.
-   * It also pins the CharArray used for storage, so it can be passed
+   * It also pins the ByteArray used for storage, so it can be passed
    * to an external function (like ::read)
    */
   String* String::create_pinned(STATE, Fixnum* size) {
@@ -86,12 +90,11 @@ namespace rubinius {
     so = state->new_object<String>(G(string));
 
     so->num_bytes(state, size);
-    so->encoding(state, Qnil);
     so->hash_value(state, nil<Fixnum>());
     so->shared(state, Qfalse);
 
     native_int bytes = size->to_native() + 1;
-    CharArray* ba = CharArray::create_pinned(state, bytes);
+    ByteArray* ba = ByteArray::create_pinned(state, bytes);
     ba->raw_bytes()[bytes-1] = 0;
 
     so->data(state, ba);
@@ -121,20 +124,26 @@ namespace rubinius {
     return so;
   }
 
-  String* String::from_chararray(STATE, CharArray* ca, Fixnum* start,
+  String* String::from_bytearray(STATE, ByteArray* ba, Fixnum* start,
                                  Fixnum* count)
   {
     String* s = state->new_object<String>(G(string));
 
     s->num_bytes(state, count);
-    s->encoding(state, Qnil);
     s->hash_value(state, nil<Fixnum>());
     s->shared(state, Qfalse);
 
     // fetch_bytes NULL terminates
-    s->data(state, ca->fetch_bytes(state, start, count));
+    s->data(state, ba->fetch_bytes(state, start, count));
 
     return s;
+  }
+
+  Encoding* String::encoding(STATE) {
+    if(encoding_->nil_p()) {
+      encoding(state, Encoding::usascii_encoding(state));
+    }
+    return encoding_;
   }
 
   hashval String::hash_string(STATE) {
@@ -198,12 +207,32 @@ namespace rubinius {
 
   const char* String::c_str(STATE) {
     char* c_string = (char*)byte_address();
+    native_int current_size = size();
 
-    if(c_string[size()] != 0) {
+    /*
+     * Oh Oh... String's don't need to be \0 terminated..
+     * The problem here is that that means we can't just
+     * set \0 on the c_string[size()] element since that means
+     * we might write outside the ByteArray storage allocated for this!
+     *
+     * Therefore we need to guard this case just in case so we don't
+     * put the VM in a state with corrupted memory.
+     */
+    if(current_size >= as<ByteArray>(data_)->size()) {
+      ByteArray* ba = ByteArray::create(state, current_size + 1);
+      memcpy(ba->raw_bytes(), byte_address(), current_size);
+      data(state, ba);
+      if(shared_ == Qtrue) shared(state, Qfalse);
+      // We need to read it again since we have a new ByteArray
+      c_string = (char*)byte_address();
+      c_string[current_size] = 0;
+    }
+
+    if(c_string[current_size] != 0) {
       unshare(state);
       // Read it again because unshare might change it.
       c_string = (char*)byte_address();
-      c_string[size()] = 0;
+      c_string[current_size] = 0;
     }
 
     return c_string;
@@ -212,8 +241,8 @@ namespace rubinius {
   Object* String::secure_compare(STATE, String* other) {
     native_int s1 = num_bytes()->to_native();
     native_int s2 = other->num_bytes()->to_native();
-    native_int d1 = as<CharArray>(data_)->size();
-    native_int d2 = as<CharArray>(other->data_)->size();
+    native_int d1 = as<ByteArray>(data_)->size();
+    native_int d2 = as<ByteArray>(other->data_)->size();
 
     if(unlikely(s1 > d1)) {
       s1 = d1;
@@ -265,9 +294,12 @@ namespace rubinius {
     so->set_tainted(is_tainted_p());
 
     so->num_bytes(state, num_bytes());
-    so->encoding(state, encoding());
     so->data(state, data());
     so->hash_value(state, hash_value());
+
+    so->encoding(state, encoding());
+    so->valid_encoding(state, valid_encoding());
+    so->ascii_only(state, ascii_only());
 
     so->shared(state, Qtrue);
     shared(state, Qtrue);
@@ -278,7 +310,7 @@ namespace rubinius {
   void String::unshare(STATE) {
     if(shared_ == Qtrue) {
       if(data_->reference_p()) {
-        data(state, as<CharArray>(data_->duplicate(state)));
+        data(state, as<ByteArray>(data_->duplicate(state)));
       }
       shared(state, Qfalse);
     }
@@ -287,7 +319,7 @@ namespace rubinius {
   String* String::append(STATE, String* other) {
     // Clamp the length of the other string to the maximum byte array size
     native_int length = other->size();
-    native_int data_length = as<CharArray>(other->data_)->size();
+    native_int data_length = as<ByteArray>(other->data_)->size();
     if(unlikely(length > data_length)) {
       length = data_length;
     }
@@ -302,7 +334,7 @@ namespace rubinius {
 
   String* String::append(STATE, const char* other, native_int length) {
     native_int current_size = size();
-    native_int data_size = as<CharArray>(data_)->size();
+    native_int data_size = as<ByteArray>(data_)->size();
 
     // Clamp the string size the maximum underlying byte array size
     if(unlikely(current_size > data_size)) {
@@ -319,11 +351,11 @@ namespace rubinius {
         capacity *= 2;
       } while(capacity < new_size + 1);
 
-      // No need to call unshare and duplicate a CharArray
+      // No need to call unshare and duplicate a ByteArray
       // just to throw it away.
       if(shared_ == Qtrue) shared(state, Qfalse);
 
-      CharArray* ba = CharArray::create(state, capacity);
+      ByteArray* ba = ByteArray::create(state, capacity);
       memcpy(ba->raw_bytes(), byte_address(), current_size);
       data(state, ba);
     } else {
@@ -353,9 +385,9 @@ namespace rubinius {
       Exception::argument_error(state, "too large byte array size");
     }
 
-    CharArray* ba = CharArray::create(state, sz + 1);
+    ByteArray* ba = ByteArray::create(state, sz + 1);
     native_int copy_size = sz;
-    native_int data_size = as<CharArray>(data_)->size();
+    native_int data_size = as<ByteArray>(data_)->size();
 
     // Check that we don't copy any data outside the existing byte array
     if(unlikely(copy_size > data_size)) {
@@ -521,7 +553,7 @@ namespace rubinius {
 
   Fixnum* String::tr_replace(STATE, struct tr_data* tr_data) {
     if(tr_data->last + 1 > (native_int)size() || shared_->true_p()) {
-      CharArray* ba = CharArray::create(state, tr_data->last + 1);
+      ByteArray* ba = ByteArray::create(state, tr_data->last + 1);
 
       data(state, ba);
       shared(state, Qfalse);
@@ -555,7 +587,7 @@ namespace rubinius {
     uint8_t* in_p = byte_address();
 
     native_int str_size = size();
-    native_int data_size = as<CharArray>(data_)->size();
+    native_int data_size = as<ByteArray>(data_)->size();
     if(unlikely(str_size > data_size)) {
       str_size = data_size;
     }
@@ -671,7 +703,7 @@ namespace rubinius {
     // This bounds checks on the total capacity rather than the virtual
     // size() of the String. This allows for string adjustment within
     // the capacity without having to change the virtual size first.
-    native_int sz = as<CharArray>(data_)->size();
+    native_int sz = as<ByteArray>(data_)->size();
     if(dst >= sz) return this;
     if(dst < 0) dst = 0;
     if(cnt > sz - dst) cnt = sz - dst;
@@ -688,8 +720,8 @@ namespace rubinius {
     native_int cnt = size->to_native();
     native_int sz = this->size();
     native_int osz = other->size();
-    native_int dsz = as<CharArray>(data_)->size();
-    native_int odsz = as<CharArray>(other->data_)->size();
+    native_int dsz = as<ByteArray>(data_)->size();
+    native_int odsz = as<ByteArray>(other->data_)->size();
 
     if(unlikely(sz > dsz)) {
       sz = dsz;
@@ -762,6 +794,36 @@ namespace rubinius {
     return s;
   }
 
+  static void invalid_codepoint_error(STATE, unsigned int c) {
+    std::ostringstream msg;
+    msg << "invalid codepoint: " << c;
+    Exception::range_error(state, msg.str().c_str());
+  }
+
+  String* String::from_codepoint(STATE, Object* self, Integer* code, Encoding* enc) {
+    String* s = state->new_object<String>(G(string));
+
+    unsigned int c = code->to_uint();
+    int n = ONIGENC_CODE_TO_MBCLEN(enc->get_encoding(), c);
+
+    if(n <= 0) invalid_codepoint_error(state, c);
+
+    // TODO: fix String to use num_chars
+    s->num_bytes(state, Fixnum::from(n));
+    s->hash_value(state, nil<Fixnum>());
+    s->shared(state, Qfalse);
+    s->encoding(state, enc);
+
+    ByteArray* ba = ByteArray::create(state, n);
+
+    n = ONIGENC_CODE_TO_MBC(enc->get_encoding(), c ,(UChar*)ba->raw_bytes());
+    if(n <= 0) invalid_codepoint_error(state, c);
+
+    s->data(state, ba);
+
+    return s;
+  }
+
   String* String::crypt(STATE, String* salt) {
     return String::create(state, ::crypt(this->c_str(state), salt->c_str(state)));
   }
@@ -789,7 +851,7 @@ namespace rubinius {
     native_int start = start_f->to_native();
     native_int count = count_f->to_native();
     native_int total = num_bytes_->to_native();
-    native_int data_size = as<CharArray>(data_)->size();
+    native_int data_size = as<ByteArray>(data_)->size();
 
     // Clamp the string size the maximum underlying byte array size
     if(unlikely(total > data_size)) {
@@ -998,6 +1060,75 @@ namespace rubinius {
       ary->append(state, str);
     }
     return ary;
+  }
+
+  static const uint8_t* find_non_ascii(const uint8_t* data, int num) {
+    for(int i = 0; i < num; i++) {
+      if(!ISASCII(data[i])) {
+        return data + i;
+      }
+    }
+    return 0;
+  }
+
+  static int precise_mbclen(const uint8_t* p, const uint8_t* e, OnigEncodingType* enc) {
+    int n;
+
+    if (e <= p) {
+      return ONIGENC_CONSTRUCT_MBCLEN_NEEDMORE(1);
+    }
+
+    n = ONIGENC_PRECISE_MBC_ENC_LEN(enc, (UChar*)p, (UChar*)e);
+    if (e-p < n) {
+      return ONIGENC_CONSTRUCT_MBCLEN_NEEDMORE(n-(int)(e-p));
+    }
+
+    return n;
+  }
+
+  Object* String::ascii_only_p(STATE) {
+    if(ascii_only_->nil_p()) {
+      if(size() == 0) {
+        ascii_only(state, encoding(state)->ascii_compatible_p(state));
+      } else {
+        if(find_non_ascii(byte_address(), size())) {
+          ascii_only(state, Qfalse);
+        } else {
+          ascii_only(state, Qtrue);
+        }
+      }
+    }
+
+    return ascii_only_;
+  }
+
+  Object* String::valid_encoding_p(STATE) {
+    if(valid_encoding_->nil_p()) {
+      if(encoding(state) == Encoding::from_index(state, Encoding::eBinary)) {
+        valid_encoding(state, Qtrue);
+        return valid_encoding_;
+      }
+
+      OnigEncodingType* enc = encoding_->get_encoding();
+
+      uint8_t* p = byte_address();
+      uint8_t* e = p + size();
+
+      while(p < e) {
+        int n = precise_mbclen(p, e, enc);
+
+        if(!ONIGENC_MBCLEN_CHARFOUND_P(n)) {
+          valid_encoding(state, Qfalse);
+          return valid_encoding_;
+        }
+
+        p += n;
+      }
+
+      valid_encoding(state, Qtrue);
+    }
+
+    return valid_encoding_;
   }
 
   void String::Info::show(STATE, Object* self, int level) {

@@ -1,5 +1,6 @@
 #include "vm/test/test.hpp"
 
+#include "builtin/encoding.hpp"
 #include "builtin/string.hpp"
 
 class TestString : public CxxTest::TestSuite, public VMTest {
@@ -61,13 +62,22 @@ public:
   }
 
   void test_string_dup() {
+    Encoding* enc = Encoding::ascii8bit_encoding(state);
     str = String::create(state, "blah");
+    str->encoding(state, enc);
+    str->valid_encoding(state, Qtrue);
+    str->ascii_only(state, Qfalse);
+
     String* str2 = str->string_dup(state);
 
     TS_ASSERT_EQUALS(str->shared(), Qtrue);
     TS_ASSERT_EQUALS(str2->shared(), Qtrue);
 
     TS_ASSERT_EQUALS(str->data(), str2->data());
+
+    TS_ASSERT_EQUALS(enc, str2->encoding());
+    TS_ASSERT_EQUALS(Qfalse, str2->ascii_only());
+    TS_ASSERT_EQUALS(Qtrue, str2->valid_encoding());
   }
 
   void test_unshare() {
@@ -78,6 +88,25 @@ public:
 
     TS_ASSERT(str->data() != str2->data());
     TS_ASSERT_EQUALS(std::string("blah"), str->c_str(state));
+  }
+
+  void test_cstr() {
+    // We need to setup a string that uses a ByteArray
+    // to full capacity in order to test c_str() resizing
+    str = String::create(state, "zzzzzzz");
+    str->num_bytes(state, Fixnum::from(8));
+    str->byte_address()[7] = 'z';
+
+    // We should still have a data backend of 8 bytes
+    // which are completely filled by all 'z' characters
+    TS_ASSERT_EQUALS(str->data()->size(), 8);
+    TS_ASSERT(!memcmp("zzzzzzzz", str->byte_address(), 8));
+
+    const char* ptr = str->c_str(state);
+    // Sizes are aligned so they end up as 16 bytes used
+    TS_ASSERT(str->data()->size() > 8);
+    TS_ASSERT(!memcmp("zzzzzzzz\0", ptr, 9));
+    TS_ASSERT(!memcmp("zzzzzzzz\0", str->byte_address(), 9));
   }
 
   void test_append() {
@@ -549,10 +578,10 @@ public:
 
   }
 
-  void test_from_chararray() {
-    CharArray* ca = String::create(state, "partial to ruby")->data();
+  void test_from_bytearray() {
+    ByteArray* ba = String::create(state, "partial to ruby")->data();
     Fixnum* six = Fixnum::from(6);
-    String* s = String::from_chararray(state, ca, six, six);
+    String* s = String::from_bytearray(state, ba, six, six);
     TS_ASSERT_EQUALS(six, s->num_bytes());
     TS_ASSERT_SAME_DATA("l to r", s->c_str(state), 6);
   }

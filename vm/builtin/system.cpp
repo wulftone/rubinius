@@ -1015,6 +1015,9 @@ namespace rubinius {
   Fixnum* System::vm_memory_size(STATE, Object* obj) {
     if(obj->reference_p()) {
       size_t bytes = obj->size_in_bytes(state->vm());
+      if(Bignum* b = try_as<Bignum>(obj)) {
+        bytes += b->managed_memory_size(state);
+      }
       Object* iv = obj->ivars();
       if(LookupTable* lt = try_as<LookupTable>(iv)) {
         bytes += iv->size_in_bytes(state->vm());
@@ -1029,18 +1032,17 @@ namespace rubinius {
     return Fixnum::from(0);
   }
 
-  Object* System::vm_throw(STATE, Symbol* dest, Object* value) {
+  Object* System::vm_throw(STATE, Object* dest, Object* value) {
     state->vm()->thread_state()->raise_throw(dest, value);
     return NULL;
   }
 
-  Object* System::vm_catch(STATE, Symbol* dest, Object* obj,
+  Object* System::vm_catch(STATE, Object* dest, Object* obj,
                            CallFrame* call_frame)
   {
     LookupData lookup(obj, obj->lookup_begin(state), false);
     Dispatch dis(state->symbol("call"));
-
-    Arguments args(state->symbol("call"));
+    Arguments args(state->symbol("call"), 1, &dest);
     args.set_recv(obj);
 
     Object* ret = dis.send(state, call_frame, lookup, args);

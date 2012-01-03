@@ -19,11 +19,15 @@ module Rubinius
       @input_loop_split = false
       @simple_options = false
       @early_option_stop = false
+      @check_syntax = false
 
       @enable_gems = Rubinius.ruby19?
       @load_gemfile = false
 
-      @gem_bin = File.join Rubinius::GEMS_PATH, "bin"
+      version = RUBY_VERSION.split(".").first(2).join(".")
+      @gem_bins = ["#{version}/bin", "bin"].map do |dir|
+        File.join Rubinius::GEMS_PATH, dir
+      end
     end
 
     def self.debugger
@@ -165,8 +169,10 @@ containing the Rubinius standard library files.
     # Checks if a gem wrapper named +base+ exists. Returns the full path to
     # the gem wrapper if it does; otherwise, returns nil.
     def find_gem_wrapper(base)
-      wrapper = File.join @gem_bin, base
-      return wrapper if File.exists? wrapper
+      @gem_bins.each do |dir|
+        wrapper = File.join dir, base
+        return wrapper if File.exists? wrapper
+      end
       return nil
     end
 
@@ -250,34 +256,8 @@ containing the Rubinius standard library files.
         @input_loop_split = true
       end
 
-      options.on "-c", "FILE", "Check the syntax of FILE" do |file|
-        if File.exists?(file)
-          case
-          when Rubinius.ruby18?
-            parser = Rubinius::Melbourne
-          when Rubinius.ruby19?
-            parser = Rubinius::Melbourne19
-          when Rubinius.ruby20?
-            parser = Rubinius::Melbourne20
-          else
-            raise "no parser available for this ruby version"
-          end
-
-          mel = parser.new file, 1, []
-
-          begin
-            mel.parse_file
-          rescue SyntaxError => e
-            show_syntax_errors(mel.syntax_errors)
-            exit 1
-          end
-
-          puts "Syntax OK"
-          exit 0
-        else
-          puts "rbx: Unable to find file -- #{file} (LoadError)"
-          exit 1
-        end
+      options.on "-c", "Only check the syntax" do
+        @check_syntax = true
       end
 
       options.on "-C", "DIR", "Change directory to DIR before running scripts" do |dir|
@@ -320,18 +300,30 @@ containing the Rubinius standard library files.
         @load_paths << dir
       end
 
-      options.on "-K", "[code]", "Set $KCODE" do |k|
-        case k
-        when 'a', 'A', 'n', 'N', nil
-          $KCODE = "NONE"
-        when 'e', 'E'
-          $KCODE = "EUC"
-        when 's', 'S'
-          $KCODE = "SJIS"
-        when 'u', 'U'
-          $KCODE = "UTF8"
-        else
-          $KCODE = "NONE"
+      if Rubinius.ruby18?
+        options.on "-K", "[code]", "Set $KCODE" do |k|
+          case k
+          when 'a', 'A', 'n', 'N', nil
+            $KCODE = "NONE"
+          when 'e', 'E'
+            $KCODE = "EUC"
+          when 's', 'S'
+            $KCODE = "SJIS"
+          when 'u', 'U'
+            $KCODE = "UTF8"
+          else
+            $KCODE = "NONE"
+          end
+        end
+      else
+        options.on "-U", "Set Encoding.default_internal to UTF-8" do
+          Encoding.default_internal = "UTF-8"
+        end
+
+        options.on "-E", "ENC", "Set external:internal character encoding to ENC" do |enc|
+          ext, int = enc.split(":")
+          Encoding.default_external = ext if ext and !ext.empty?
+          Encoding.default_internal = int if int and !int.empty?
         end
       end
 
@@ -356,6 +348,10 @@ containing the Rubinius standard library files.
                  "Run SCRIPT using PATH environment variable to find it") do |script|
         options.stop_parsing
         @run_irb = false
+
+        # Load a gemfile now if we need to so that -S can see binstubs
+        # internal to the Gemfile
+        gemfile
 
         # First, check if any existing gem wrappers match.
         unless file = find_gem_wrapper(script)
@@ -497,6 +493,10 @@ VM Options
       if @profile
         require 'profile'
       end
+
+      if @check_syntax
+        check_syntax
+      end
     end
 
     RUBYOPT_VALID_OPTIONS = "IdvwWrKT"
@@ -591,6 +591,7 @@ to rebuild the compiler.
       if @load_gemfile
         require 'rubygems' unless @enable_gems
         require 'bundler/setup'
+        @load_gemfile = false
       end
     end
 
@@ -646,6 +647,55 @@ to rebuild the compiler.
 
       $0 = @script
       CodeLoader.load_script @script, @debugging
+    end
+
+    #Check Ruby syntax of source
+    def check_syntax
+      syntax_ok = false
+
+      case
+      when Rubinius.ruby18?
+        parser = Rubinius::Melbourne
+      when Rubinius.ruby19?
+        parser = Rubinius::Melbourne19
+      when Rubinius.ruby20?
+        parser = Rubinius::Melbourne20
+      else
+        raise "no parser available for this ruby version"
+      end
+
+      if @script
+        if File.exists?(@script)
+          mel = parser.new @script, 1, []
+
+          begin
+            mel.parse_file
+          rescue SyntaxError => e
+            show_syntax_errors(mel.syntax_errors)
+            exit 1
+          end
+        else
+          puts "rbx: Unable to find file -- #{@script} (LoadError)"
+          exit 1
+        end
+      elsif not @evals.empty?
+        begin
+          mel = parser.parse_string @evals.join("\n")
+        rescue SyntaxError => e
+          show_syntax_errors(mel.syntax_errors)
+          exit 1
+        end
+      else
+        begin
+          mel = parser.parse_string STDIN.read
+        rescue SyntaxError => e
+          show_syntax_errors(mel.syntax_errors)
+          exit 1
+        end
+      end
+
+      puts "Syntax OK"
+      exit 0
     end
 
     # Run IRB unless we were passed -e, -S arguments or a script to run.

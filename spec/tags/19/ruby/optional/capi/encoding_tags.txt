@@ -1,0 +1,5 @@
+fails:C-API Encoding function rb_enc_get returns the encoding ossociated with an object
+fails:C-API Encoding function rb_enc_associate sets the encoding of a String to the encoding
+fails:C-API Encoding function rb_enc_associate sets the encoding of a Regexp to the encoding
+fails:C-API Encoding function rb_enc_associate_index sets the encoding of a String to the encoding
+fails:C-API Encoding function rb_enc_associate_index sets the encoding of a Regexp to the encoding

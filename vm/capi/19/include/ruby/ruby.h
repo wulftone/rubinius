@@ -302,13 +302,14 @@ typedef void (*RUBY_DATA_FUNC)(void*);
     cCApiTypeError,
     cCApiThreadError,
     cCApiZeroDivisionError,
-
     cCApiMethod,
-
     cCApiRational,
     cCApiComplex,
-
     cCApiMathDomainError,
+    cCApiEncoding,
+    cCApiEncCompatError,
+    cCApiWaitReadable,
+    cCApiWaitWritable,
 
     // MUST be last
     cCApiMaxConstant
@@ -355,6 +356,8 @@ typedef void (*RUBY_DATA_FUNC)(void*);
 
 #define T_RATIONAL 0x20
 #define T_COMPLEX  0x21
+
+#define T_ENCODING 0x22
 
   /**
    *  Method variants that can be defined.
@@ -504,6 +507,7 @@ typedef struct RIO rb_io_t;
 #define rb_cMethod            (capi_get_constant(cCApiMethod))
 #define rb_cRational          (capi_get_constant(cCApiRational))
 #define rb_cComplex           (capi_get_constant(cCApiComplex))
+#define rb_cEncoding          (capi_get_constant(cCApiEncoding))
 
 /* Global Module objects. */
 
@@ -511,6 +515,8 @@ typedef struct RIO rb_io_t;
 #define rb_mEnumerable        (capi_get_constant(cCApiEnumerable))
 #define rb_mKernel            (capi_get_constant(cCApiKernel))
 #define rb_mGC                (capi_get_constant(cCApiGC))
+#define rb_mWaitReadable      (capi_get_constant(cCApiWaitReadable))
+#define rb_mWaitWritable      (capi_get_constant(cCApiWaitWritable))
 
 /* Utility modules */
 #define rb_mCAPI              (capi_get_constant(cCApiCAPI))
@@ -547,6 +553,7 @@ typedef struct RIO rb_io_t;
 #define rb_eThreadError       (capi_get_constant(cCApiThreadError))
 #define rb_eZeroDivError      (capi_get_constant(cCApiZeroDivisionError))
 #define rb_eMathDomainError   (capi_get_constant(cCApiMathDomainError))
+#define rb_eEncCompatError    (capi_get_constant(cCApiEncCompatError))
 
 
 /* Interface macros */
@@ -656,6 +663,12 @@ unsigned long long rb_num2ull(VALUE);
 # define SSIZET2NUM(v) INT2NUM(v)
 #endif
 
+#if SIZEOF_INT < SIZEOF_LONG
+int rb_long2int(long n);
+#else
+#define rb_long2int(n)  ((int)(n))
+#endif
+
 
 /** Convert from a Float to a double */
 double rb_num2dbl(VALUE);
@@ -694,7 +707,8 @@ VALUE rb_uint2big(unsigned long number);
 #define RREGEXP_OPTIONS(reg) rb_reg_options(reg)
 
 /** The length of string str. */
-#define RSTRING_LEN(str)  rb_str_len(str)
+#define RSTRING_LEN(str)    rb_str_len(str)
+#define RSTRING_LENINT(str) rb_str_len(str)
 
 /** The pointer to the string str's data. */
 #ifdef RUBY_READONLY_STRING
@@ -752,6 +766,14 @@ VALUE rb_uint2big(unsigned long number);
 
   VALUE rb_ll2inum(long long val);
   VALUE rb_ull2inum(unsigned long long val);
+
+#if SIZEOF_TIME_T == 8
+#define TIMET2NUM(v)   LL2NUM(v)
+#define NUM2TIMET(v)   NUM2LL(v)
+#else
+#define TIMET2NUM(v)   LONG2NUM(v)
+#define NUM2TIMET(v)   NUM2LONG(v)
+#endif
 
 
 /* Secret extra stuff */
@@ -1054,6 +1076,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Returns the Class object this object is an instance of. */
   VALUE   rb_class_of(VALUE object);
+
+  /** Returns the superclass of a class. */
+  VALUE   rb_class_superclass(VALUE klass);
 
   /** Returns the Class object contained in the klass field of object
    * (ie, a singleton class if it's there) */
@@ -1855,7 +1880,7 @@ VALUE rb_uint2big(unsigned long number);
 
   NORETURN(void rb_notimplement());
 
-  NORETURN(void rb_f_notimplement());
+  NORETURN(VALUE rb_f_notimplement(int argc, VALUE *argv, VALUE obj));
 
   /** Raises an ArgumentError exception. */
   NORETURN(void rb_invalid_str(const char *str, const char *type));

@@ -527,6 +527,15 @@ class Array
     return self
   end
 
+  # Returns a copy of self with all nil elements removed
+  def compact
+    out = dup
+    out.untaint if out.tainted?
+    out.trust if out.untrusted?
+
+    out.compact! || out
+  end
+
   def compile_repeated_combinations(combination_size, place, index, depth, &block)
     if depth > 0
       (length - index).times do |i|
@@ -539,6 +548,14 @@ class Array
   end
 
   private :compile_repeated_combinations
+
+  # Returns a new Array by removing items from self for
+  # which block is true. An Array is also returned when
+  # invoked on subclasses. See #reject!
+  def reject(&block)
+    return to_enum(:reject) unless block_given?
+    Array.new(self).delete_if(&block)
+  end
 
   #  call-seq:
   #     ary.repeated_permutation(n) { |p| block } -> ary
@@ -658,6 +675,12 @@ class Array
 
     ary = select(&block)
     replace ary unless size == ary.size
+  end
+
+  # Returns a new array with elements of this array shuffled.
+  def shuffle
+    return dup.shuffle! if instance_of? Array
+    Array.new(self).shuffle!
   end
 
   # Deletes the element(s) given by an index (optionally with a length)

@@ -2,10 +2,16 @@ class IO
   attr_accessor :external
   attr_accessor :internal
 
-  # In MRI, these are modules that are used to extend the exception every time
-  # an exception is raised.
-  class WaitReadable < Errno::EAGAIN; end
-  class WaitWritable < Errno::EAGAIN; end
+  module WaitReadable; end
+  module WaitWritable; end
+
+  class EAGAINWaitReadable < Errno::EAGAIN
+    include ::IO::WaitReadable
+  end
+
+  class EAGAINWaitWritable < Errno::EAGAIN
+    include ::IO::WaitWritable
+  end
 
   def self.binread(file, *arg)
     unless arg.size < 3
@@ -121,16 +127,15 @@ class IO
 
       @from.seek @offset, IO::SEEK_CUR if @offset
 
-      size = rest = @length ? @length : 16384
+      size = @length ? @length : 16384
       bytes = 0
 
       begin
         while data = @from.send(@method, size, "")
           @to.write data
           bytes += data.size
-          rest -= data.size
 
-          break unless rest > 0
+          break if @length && bytes >= @length
         end
       rescue EOFError
         # done reading
@@ -591,6 +596,24 @@ class IO
       yield pipe
     ensure
       pipe.close unless pipe.closed?
+    end
+  end
+
+  ##
+  # Return a string describing this IO object.
+  def inspect
+    if @descriptor != -1
+      "#<#{self.class}:fd #{@descriptor}>"
+    else
+      "#<#{self.class}:(closed)"
+    end
+  end
+
+  def lines(*args, &block)
+    if block_given?
+      each_line(*args, &block)
+    else
+      to_enum :each_line, *args
     end
   end
 end

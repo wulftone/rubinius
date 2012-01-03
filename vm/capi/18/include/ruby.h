@@ -264,13 +264,14 @@ extern "C" {
     cCApiTypeError,
     cCApiThreadError,
     cCApiZeroDivisionError,
-
     cCApiMethod,
-
     cCApiRational,
     cCApiComplex,
-
     cCApiMathDomainError,
+    cCApiEncoding,
+    cCApiEncCompatError,
+    cCApiWaitReadable,
+    cCApiWaitWritable,
 
     // MUST be last
     cCApiMaxConstant
@@ -317,6 +318,7 @@ extern "C" {
 
 #define T_RATIONAL 0x20
 #define T_COMPLEX  0x21
+#define T_ENCODING 0x22
 
   /**
    *  Method variants that can be defined.
@@ -465,6 +467,7 @@ typedef struct RIO rb_io_t;
 #define rb_cMethod            (capi_get_constant(cCApiMethod))
 #define rb_cRational          (capi_get_constant(cCApiRational))
 #define rb_cComplex           (capi_get_constant(cCApiComplex))
+#define rb_cEncoding          (capi_get_constant(cCApiEncoding))
 
 /* Global Module objects. */
 
@@ -472,6 +475,8 @@ typedef struct RIO rb_io_t;
 #define rb_mEnumerable        (capi_get_constant(cCApiEnumerable))
 #define rb_mKernel            (capi_get_constant(cCApiKernel))
 #define rb_mGC                (capi_get_constant(cCApiGC))
+#define rb_mWaitReadable      (capi_get_constant(cCApiWaitReadable))
+#define rb_mWaitWritable      (capi_get_constant(cCApiWaitWritable))
 
 /* Utility modules */
 #define rb_mCAPI              (capi_get_constant(cCApiCAPI))

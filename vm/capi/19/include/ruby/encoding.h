@@ -9,6 +9,8 @@ extern "C" {
 
 typedef OnigEncodingType rb_encoding;
 
+#define ENCODING_INLINE_MAX 1023
+
 #define ENC_CODERANGE_UNKNOWN	      0
 #define ENC_CODERANGE_7BIT	        1
 
@@ -32,18 +34,30 @@ typedef OnigEncodingType rb_encoding;
 #define rb_enc_mbminlen(enc)        (enc)->min_enc_len
 #define rb_enc_mbmaxlen(enc)        (enc)->max_enc_len
 
+int rb_enc_mbclen(const char *p, const char *e, rb_encoding *enc);
 int rb_enc_precise_mbclen(const char *p, const char *e, rb_encoding *enc);
 int rb_enc_codelen(int code, rb_encoding *enc);
 
-rb_encoding *rb_utf8_encoding(void);
-rb_encoding *rb_usascii_encoding(void);
-rb_encoding *rb_ascii8bit_encoding(void);
+rb_encoding* rb_utf8_encoding(void);
+rb_encoding* rb_usascii_encoding(void);
+rb_encoding* rb_ascii8bit_encoding(void);
+rb_encoding* rb_locale_encoding(void);
+rb_encoding* rb_filesystem_encoding(void);
 
+int rb_utf8_encindex(void);
+int rb_usascii_encindex(void);
+int rb_ascii8bit_encindex(void);
+int rb_locale_encindex(void);
+int rb_filesystem_encindex(void);
+int rb_enc_get_index(VALUE obj);
+int rb_to_encoding_index(VALUE obj);
+
+rb_encoding* rb_enc_find(const char* name);
 rb_encoding* rb_enc_get(VALUE obj);
 rb_encoding* rb_enc_compatible(VALUE str1, VALUE str2);
 rb_encoding* rb_enc_from_index(int idx);
-rb_encoding* rb_locale_encoding(void);
-rb_encoding *rb_default_internal_encoding(void);
+rb_encoding* rb_default_internal_encoding(void);
+rb_encoding* rb_to_encoding(VALUE obj);
 
 VALUE rb_enc_from_encoding(rb_encoding *enc);
 
@@ -53,6 +67,7 @@ int rb_enc_find_index(const char *name);
 int rb_enc_dummy_p(rb_encoding *enc);
 VALUE rb_enc_associate(VALUE, rb_encoding*);
 VALUE rb_enc_associate_index(VALUE, int);
+void rb_enc_copy(VALUE dest, VALUE src);
 
 VALUE rb_enc_str_new(const char*, long, rb_encoding*);
 int rb_enc_str_coderange(VALUE);

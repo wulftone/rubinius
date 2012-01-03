@@ -8,7 +8,6 @@
 #include "builtin/basicobject.hpp"
 #include "builtin/block_environment.hpp"
 #include "builtin/bytearray.hpp"
-#include "builtin/chararray.hpp"
 #include "builtin/class.hpp"
 #include "builtin/compactlookuptable.hpp"
 #include "builtin/compiledmethod.hpp"
@@ -46,6 +45,7 @@
 #include "builtin/randomizer.hpp"
 #include "builtin/module.hpp"
 #include "builtin/class.hpp"
+#include "builtin/atomic.hpp"
 
 #include "configuration.hpp"
 #include "config.h"
@@ -300,7 +300,6 @@ namespace rubinius {
     // typically means creating a Ruby class.
     Array::init(state);
     ByteArray::init(state);
-    CharArray::init(state);
     String::init(state);
     Encoding::init(state);
     kcode::init(state);
@@ -338,6 +337,7 @@ namespace rubinius {
     Fiber::init(state);
     Alias::init(state);
     Randomizer::init(state);
+    AtomicReference::init(state);
   }
 
   // @todo document all the sections of bootstrap_ontology
@@ -537,7 +537,12 @@ namespace rubinius {
     loe = dexc(LoadError, scp);
     rte = dexc(RuntimeError, std);
     sce = dexc(SystemCallError, std);
-    stk = dexc(StackError, exc);
+    // SystemStackError has a different superclass in 1.9
+    if(LANGUAGE_18_ENABLED(state)) {
+      stk = dexc(SystemStackError, std);
+    } else {
+      stk = dexc(SystemStackError, exc);
+    }
     lje = dexc(LocalJumpError, std);
     rng = dexc(RangeError, std);
     dexc(FloatDomainError, rng);
@@ -557,9 +562,9 @@ namespace rubinius {
     ontology::new_class(state, "AssertionError", vme, G(rubinius));
     ontology::new_class(state, "ObjectBoundsExceededError", vme, G(rubinius));
 
-    // Create the stack error object now, since we probably wont be
-    // able to later.
-    GO(stack_error).set(new_object<Exception>(stk));
+    // The stack_error mechanisms assume that there will be enough
+    // space left over to allocate the actual exception.
+    GO(stack_error).set(stk);
 
     GO(exc_type).set(type);
     GO(exc_arg).set(arg);

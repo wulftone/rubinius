@@ -529,8 +529,8 @@ class Regexp
     hash = {}
 
     if @names
-      @names.each do |k, v|
-        hash[k.to_s] = [v + 1] # we only have one location currently for a key
+      @names.sort_by { |a,b| b.first }.each do |k, v| # LookupTable is unordered
+        hash[k.to_s] = v
       end
     end
 
@@ -554,16 +554,12 @@ class Regexp
   #
   def names
     if @names
-      ary = Array.new(@names.size)
-      @names.each do |k, v|
-        ary[v] = k.to_s
-      end
-
-      return ary
+      @names.sort_by { |a,b| b.first }.map { |x| x.first.to_s } # LookupTable is unordered
     else
       []
     end
   end
+
 end
 
 class MatchData

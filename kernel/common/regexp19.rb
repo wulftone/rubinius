@@ -22,6 +22,11 @@ class Regexp
       false
     end
   end
+
+  def encoding
+    source.encoding
+  end
+
 end
 
 class MatchData
@@ -42,14 +47,18 @@ class MatchData
         y = tup.at(1)
         return @source.substring(x, y-x)
       end
-    when Symbol
-      num = @regexp.name_table[idx]
-      raise IndexError, "Unknown named group '#{idx}'" unless num
-      return self[num + 1]
     when String
-      num = @regexp.name_table[idx.to_sym]
-      raise IndexError, "Unknown named group '#{idx}'" unless num
-      return self[num + 1]
+      if @regexp.name_table
+        num = @regexp.name_table[idx.to_sym]
+        return self[num.last] if num
+      end
+      raise IndexError, "Unknown named group '#{idx}'"
+    when Symbol
+      if @regexp.name_table
+        num = @regexp.name_table[idx]
+        return self[num.last] if num
+      end
+      raise IndexError, "Unknown named group '#{idx}'"
     end
 
     return to_a[idx]

@@ -4,6 +4,14 @@ class Numeric
     self.__slash__(other).floor
   end
 
+  def fdiv(other)
+    self.to_f / other
+  end
+
+  def quo(other)
+    Rational(self) / other
+  end
+
   def modulo(other)
     self - other * self.div(other)
   end
@@ -40,10 +48,6 @@ class Numeric
     self
   end
   alias_method :conj, :conjugate
-
-  def rationalize(eps = nil)
-    Rational(self, 1)
-  end
 
   def rect
     [self, 0]

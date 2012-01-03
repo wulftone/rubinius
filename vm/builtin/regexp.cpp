@@ -1,15 +1,16 @@
 #include "oniguruma.h" // Must be first.
 
 #include "builtin/regexp.hpp"
+#include "builtin/block_environment.hpp"
+#include "builtin/bytearray.hpp"
 #include "builtin/class.hpp"
+#include "builtin/encoding.hpp"
 #include "builtin/integer.hpp"
 #include "builtin/lookuptable.hpp"
+#include "builtin/proc.hpp"
 #include "builtin/string.hpp"
 #include "builtin/symbol.hpp"
 #include "builtin/tuple.hpp"
-#include "builtin/bytearray.hpp"
-#include "builtin/block_environment.hpp"
-#include "builtin/proc.hpp"
 
 #include "vm.hpp"
 #include "vm/object_utils.hpp"
@@ -52,6 +53,15 @@ namespace rubinius {
     return (char*)onig_version();
   }
 
+  Encoding* Regexp::encoding(STATE) {
+    return source_->encoding(state);
+  }
+
+  Encoding* Regexp::encoding(STATE, Encoding* enc) {
+    source_->encoding(state, enc);
+    return enc;
+  }
+
   static OnigEncoding get_enc_from_kcode(int kcode) {
     OnigEncoding r;
 
@@ -64,10 +74,10 @@ namespace rubinius {
         r = ONIG_ENCODING_EUC_JP;
         break;
       case KCODE_SJIS:
-        r = ONIG_ENCODING_SJIS;
+        r = ONIG_ENCODING_Shift_JIS;
         break;
       case KCODE_UTF8:
-        r = ONIG_ENCODING_UTF8;
+        r = ONIG_ENCODING_UTF_8;
         break;
     }
     return r;
@@ -81,9 +91,9 @@ namespace rubinius {
     case kcode::eEUC:
       return ONIG_ENCODING_EUC_JP;
     case kcode::eSJIS:
-      return ONIG_ENCODING_SJIS;
+      return ONIG_ENCODING_Shift_JIS;
     case kcode::eUTF8:
-      return ONIG_ENCODING_UTF8;
+      return ONIG_ENCODING_UTF_8;
     }
   }
 
@@ -91,10 +101,10 @@ namespace rubinius {
     int r;
 
     r = KCODE_ASCII;
-    if (enc == ONIG_ENCODING_ASCII)  r = KCODE_NONE;
-    if (enc == ONIG_ENCODING_EUC_JP) r = KCODE_EUC;
-    if (enc == ONIG_ENCODING_SJIS)   r = KCODE_SJIS;
-    if (enc == ONIG_ENCODING_UTF8)   r = KCODE_UTF8;
+    if (enc == ONIG_ENCODING_ASCII)       r = KCODE_NONE;
+    if (enc == ONIG_ENCODING_EUC_JP)      r = KCODE_EUC;
+    if (enc == ONIG_ENCODING_Shift_JIS)   r = KCODE_SJIS;
+    if (enc == ONIG_ENCODING_UTF_8)       r = KCODE_UTF8;
     return r;
   }
 
@@ -105,15 +115,14 @@ namespace rubinius {
 
   static int _gather_names(const UChar *name, const UChar *name_end,
       int ngroup_num, int *group_nums, regex_t *reg, struct _gather_data *gd) {
+    STATE = gd->state;
+    Array* ary = Array::create(state, ngroup_num);
 
-    int gn;
-    STATE;
-    LookupTable* tbl = gd->tbl;
+    for(int i = 0; i < ngroup_num; i++) {
+      ary->set(state, i, Fixnum::from(group_nums[i]));
+    }
 
-    state = gd->state;
-
-    gn = group_nums[0];
-    tbl->store(state, state->symbol((char*)name), Fixnum::from(gn - 1));
+    gd->tbl->store(state, state->symbol((char*)name), ary);
     return 0;
   }
 

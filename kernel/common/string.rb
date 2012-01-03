@@ -13,7 +13,7 @@ class String
 
   def self.allocate
     str = super()
-    str.__data__ = Rubinius::CharArray.new(1)
+    str.__data__ = Rubinius::ByteArray.new(1)
     str.num_bytes = 0
     str
   end
@@ -21,9 +21,9 @@ class String
   ##
   # Creates a new string from copying _count_ bytes from the
   # _start_ of _ca_.
-  def self.from_chararray(ca, start, count)
-    Rubinius.primitive :string_from_chararray
-    raise PrimitiveFailure, "String.from_chararray primitive failed"
+  def self.from_bytearray(ca, start, count)
+    Rubinius.primitive :string_from_bytearray
+    raise PrimitiveFailure, "String.from_bytearray primitive failed"
   end
 
   class << self
@@ -1028,6 +1028,7 @@ class String
 
     if pattern.kind_of? Regexp
       if m = pattern.match(self)
+        Regexp.last_match = m
         return [m.pre_match, m.to_s, m.post_match]
       end
     else
@@ -1882,6 +1883,7 @@ class String
       @shared = nil
     end
 
+    @ascii_only = @valid_encoding = nil
     @hash_value = nil # reset the hash value
   end
 
@@ -1949,7 +1951,10 @@ class String
     else
       # Resize if necessary
       new_size = @num_bytes - count + rsize
-      resize_capacity new_size if new_size > @data.size
+      # We use >= here and not > so we don't use every byte for
+      # @data. We always want to have at least 1 character room
+      # in a ByteArray for creating a \0 terminated string.
+      resize_capacity new_size if new_size >= @data.size
 
       # easy, fits right in.
       if count == rsize

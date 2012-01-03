@@ -321,7 +321,7 @@ step1:
       initial_count = orig.f.aux_word & cAuxLockRecCountMask;
     }
 
-    ih->initialize_mutex(state->vm()->thread_id(), initial_count + 1);
+    ih->initialize_mutex(state->vm()->thread_id(), initial_count);
 
     tmp.all_flags = ih;
     tmp.f.meaning = eAuxWordInflated;
@@ -382,8 +382,6 @@ step1:
         }
 
         ih = inflated_headers_->allocate(obj);
-        ih->flags().meaning = eAuxWordEmpty;
-        ih->flags().aux_word = 0;
         break;
       case eAuxWordInflated:
         if(cDebugThreading) {

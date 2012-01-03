@@ -29,17 +29,9 @@ class Integer < Numeric
   end
 
   alias_method :to_int, :to_i
-  alias_method :round, :to_i
   alias_method :truncate, :to_i
   alias_method :ceil, :to_i
   alias_method :floor, :to_i
-
-  def chr
-    if self > 255 || self < 0
-      raise RangeError.new("#{self} is out of the valid character range")
-    end
-    String.pattern 1, self
-  end
 
   def [](index)
     index = Rubinius::Type.coerce_to(index, Integer, :to_int)

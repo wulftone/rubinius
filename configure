@@ -87,6 +87,9 @@ class Configure
     @llvm_prebuilt_path     = File.join(@llvm_parent_path, "prebuilt")
     @llvm_include_path      = File.join(@llvm_default, "include")
 
+    @include_dirs = ["/usr/local/include", "/opt/local/include"]
+    @lib_dirs     = ["/usr/local/lib", "/opt/local/lib"]
+
     # File system paths
     @bindir       = root + "/bin"
     @include18dir = root + "/vm/capi/18/include"
@@ -114,7 +117,7 @@ class Configure
     @libversion = "2.0"
     @version = "#{@libversion}.0dev"
     @release_date = "yyyy-mm-dd"
-    @config_version = 147
+    @config_version = 151
 
     # TODO: add conditionals for platforms
     if RbConfig::CONFIG["build_os"] =~ /darwin/
@@ -238,6 +241,14 @@ class Configure
 
     o.on "--update-prebuilt", "Update prebuilt LLVM packages from the internet" do
       update_prebuilt @llvm_generic_prebuilt, true
+    end
+
+    o.on "--with-include-dir", "PATH", "Add path the default include search paths" do |path|
+      @include_dirs << path
+    end
+
+    o.on "--with-lib-dir", "PATH", "Add path the default library search paths" do |path|
+      @lib_dirs << path
     end
 
     o.doc "\n File system paths for installing Rubinius"
@@ -662,16 +673,9 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
   end
 
   def c_includes
-    str = []
-    if File.exists? "/usr/local/include"
-      str << "-I/usr/local/include"
-    end
-
-    if File.exists? "/opt/local/include"
-      str << "-I/opt/local/include"
-    end
-
-    return str.join(" ")
+    @include_dirs.map do |d|
+      "-I#{d}"
+    end.join(" ")
   end
 
   def env(which)
@@ -844,6 +848,14 @@ int main() { return tgetnum(""); }
     @log.write @curses ? @curses : "not found"
   end
 
+  def detect_include_dirs
+    @include_dirs = @include_dirs.select {|p| File.exists? p }
+  end
+
+  def detect_lib_dirs
+    @lib_dirs = @lib_dirs.select {|p| File.exists? p }
+  end
+
   def has_struct_member(struct, member, includes = [])
     @log.print "Checking whether struct #{struct} has member #{member}: "
     tf = Tempfile.new("rbx-test")
@@ -972,6 +984,10 @@ int main() { return tgetnum(""); }
       @defines << "HAVE_DAYLIGHT"
     end
 
+    if has_function("nl_langinfo", ["langinfo.h"])
+      @defines << "HAVE_NL_LANGINFO"
+    end
+
     @vendor_zlib = true if @features["vendor-zlib"]
   end
 
@@ -984,6 +1000,9 @@ int main() { return tgetnum(""); }
     end
 
     @log.write ""
+
+    detect_include_dirs
+    detect_lib_dirs
 
     detect_sizeof("short")
     detect_sizeof("int")
@@ -1001,7 +1020,7 @@ int main() { return tgetnum(""); }
     detect_x86_32bit
     detect_features
     detect_curses
-  end
+ end
 
   def which_ruby
     if Object.const_defined?(:RUBY_ENGINE)
@@ -1079,6 +1098,8 @@ module Rubinius
     :user_cflags    => "#{@user_cflags}",
     :user_cppflags  => "#{@user_cppflags}",
     :user_ldflags   => "#{@user_ldflags}",
+    :include_dirs   => #{@include_dirs.inspect},
+    :lib_dirs       => #{@lib_dirs.inspect},
     :defines        => #{@defines.inspect},
     :curses         => #{@curses.inspect},
     :host           => "#{@host}",
@@ -1125,107 +1146,66 @@ end
     # Write the config file used to build the C++ VM.
     Dir.mkdir "vm/gen" unless File.directory? "vm/gen"
 
-    File.open "vm/gen/config.h", "wb" do |f|
+    vm_config_h = "vm/gen/config.h"
+    File.open vm_config_h, "wb" do |f|
       f.puts <<-EOC
-#define RBX_HOST          "#{@host}"
-#define RBX_CPU           "#{@cpu}"
-#define RBX_VENDOR        "#{@vendor}"
-#define RBX_OS            "#{@os}"
-#define RBX_BIN_PATH      "#{@bindir}"
-#define RBX_GEMS_PATH     "#{@gemsdir}"
-#define RBX_RUNTIME       "#{@runtime}"
-#define RBX_KERNEL_PATH   "#{@kernel_path}"
-#define RBX_LIB_PATH      "#{@lib_path}"
-#define RBX_HDR18_PATH    "#{@include18dir}"
-#define RBX_HDR19_PATH    "#{@include19dir}"
-#define RBX_HDR20_PATH    "#{@include20dir}"
-#define RBX_SITE_PATH     "#{@sitedir}"
-#define RBX_VENDOR_PATH   "#{@vendordir}"
-#define RBX_VERSION       "#{@version}"
-#define RBX_LIB_VERSION   "#{@libversion}"
-#define RBX_LDSHARED      "#{@ldshared}"
-#define RBX_RELEASE_DATE  "#{@release_date}"
-#define RBX_SIZEOF_LONG   #{sizeof("long")}
-#define RBX_LLVM_API_VER  #{@llvm_api_version}
+#define RBX_HOST             "#{@host}"
+#define RBX_CPU              "#{@cpu}"
+#define RBX_VENDOR           "#{@vendor}"
+#define RBX_OS               "#{@os}"
+#define RBX_BIN_PATH         "#{@bindir}"
+#define RBX_GEMS_PATH        "#{@gemsdir}"
+#define RBX_RUNTIME          "#{@runtime}"
+#define RBX_KERNEL_PATH      "#{@kernel_path}"
+#define RBX_LIB_PATH         "#{@lib_path}"
+#define RBX_HDR18_PATH       "#{@include18dir}"
+#define RBX_HDR19_PATH       "#{@include19dir}"
+#define RBX_HDR20_PATH       "#{@include20dir}"
+#define RBX_SITE_PATH        "#{@sitedir}"
+#define RBX_VENDOR_PATH      "#{@vendordir}"
+#define RBX_VERSION          "#{@version}"
+#define RBX_LIB_VERSION      "#{@libversion}"
+#define RBX_LDSHARED         "#{@ldshared}"
+#define RBX_RELEASE_DATE     "#{@release_date}"
+#define RBX_SIZEOF_LONG      #{sizeof("long")}
+#define RBX_LLVM_API_VER     #{@llvm_api_version}
       EOC
 
       if @vendor_zlib
-        f.puts %[#define RBX_ZLIB_PATH     "#{@lib_path}/zlib/"]
+        f.puts %[#define RBX_ZLIB_PATH        "#{@lib_path}/zlib/"]
       else
-        f.puts %[#define RBX_ZLIB_PATH     ""]
+        f.puts %[#define RBX_ZLIB_PATH        ""]
       end
 
       @supported_versions.each do |ver|
-        f.puts "#define RBX_DEFAULT_#{ver}    #{ver == @default_version}"
+        f.puts "#define RBX_DEFAULT_#{ver}       #{ver == @default_version}"
       end
 
       @version_list.each do |ver|
-        f.puts "#define RBX_ENABLED_#{ver}    1"
+        f.puts "#define RBX_ENABLED_#{ver}       1"
       end
 
       if @little_endian
-        f.puts "#define RBX_LITTLE_ENDIAN 1"
+        f.puts "#define RBX_LITTLE_ENDIAN    1"
       end
 
       if @tr1_hash
-        f.puts "#define RBX_HAVE_TR1_HASH 1"
+        f.puts "#define RBX_HAVE_TR1_HASH    1"
       end
 
       [:windows, :darwin, :bsd, :linux].each do |platform|
         if instance_variable_get(:"@#{platform}")
-          f.puts "#define RBX_#{platform.to_s.upcase} 1"
+          f.puts "#define RBX_#{platform.to_s.upcase}           1"
         end
+      end
+
+      @defines.each do |d|
+        f.puts "#define #{d.ljust(20)} 1"
       end
     end
 
-    rbx_config_h = "vm/capi/18/include/rbx_config.h"
-    File.open rbx_config_h, "w" do |f|
-      f.puts <<-EOC
-#define RBX_HOST          "#{@host}"
-#define RBX_CPU           "#{@cpu}"
-#define RBX_VENDOR        "#{@vendor}"
-#define RBX_OS            "#{@os}"
-#define RBX_BIN_PATH      "#{@bindir}"
-#define RBX_GEMS_PATH     "#{@gemsdir}"
-#define RBX_RUNTIME       "#{@runtime}"
-#define RBX_KERNEL_PATH   "#{@kernel_path}"
-#define RBX_LIB_PATH      "#{@lib_path}"
-#define RBX_HDR18_PATH    "#{@include18dir}"
-#define RBX_HDR19_PATH    "#{@include19dir}"
-#define RBX_HDR20_PATH    "#{@include20dir}"
-#define RBX_SITE_PATH     "#{@sitedir}"
-#define RBX_VENDOR_PATH   "#{@vendordir}"
-#define RBX_VERSION       "#{@version}"
-#define RBX_LIB_VERSION   "#{@libversion}"
-#define RBX_LDSHARED      "#{@ldshared}"
-#define RBX_RELEASE_DATE  "#{@release_date}"
-#define RBX_SIZEOF_LONG   #{sizeof("long")}
-#define RBX_LLVM_API_VER  #{@llvm_api_version}
-
-      EOC
-
-      if @vendor_zlib
-        f.puts %[#define RBX_ZLIB_PATH     "#{@lib_path}/zlib/"]
-      else
-        f.puts %[#define RBX_ZLIB_PATH     ""]
-      end
-
-      if @little_endian
-        f.puts "#define RBX_LITTLE_ENDIAN 1"
-      end
-
-      if @tr1_hash
-        f.puts "#define RBX_HAVE_TR1_HASH 1"
-      end
-
-      [:windows, :darwin, :bsd, :linux].each do |platform|
-        if instance_variable_get(:"@#{platform}")
-          f.puts "#define RBX_#{platform.to_s.upcase} 1"
-        end
-      end
-    end
-
-    FileUtils.cp rbx_config_h, "vm/capi/19/include/rbx_config.h"
+    FileUtils.cp vm_config_h, "vm/capi/18/include/rbx_config.h"
+    FileUtils.cp vm_config_h, "vm/capi/19/include/rbx_config.h"
 
     # Write the config file used in the C-API.
     config_h = "vm/capi/18/include/config.h"

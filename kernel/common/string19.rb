@@ -12,30 +12,57 @@ class String
 
   private :initialize
 
-  def encode(to=undefined, from=undefined, options=nil)
+  def byteslice(start_or_range, length=undefined)
+    if start_or_range.kind_of? Range
+      start = Rubinius::Type.coerce_to start_or_range.begin, Fixnum, :to_int
+      start += @num_bytes if start < 0
+      return if start < 0 or start > @num_bytes
+
+      finish = Rubinius::Type.coerce_to start_or_range.end, Fixnum, :to_int
+      finish += @num_bytes if finish < 0
+
+      finish += 1 unless start_or_range.exclude_end?
+      length = finish - start
+
+      return substring 0, 0 if length < 0
+    else
+      start = Rubinius::Type.coerce_to start_or_range, Fixnum, :to_int
+      start += @num_bytes if start < 0
+
+      if length.equal? undefined
+        return if start == @num_bytes
+        length = 1
+      else
+        length = Rubinius::Type.coerce_to length, Fixnum, :to_int
+        return if length < 0
+      end
+
+      return if start < 0 or start > @num_bytes
+    end
+
+    substring start, length
+  end
+
+  def encode!(to=undefined, from=undefined, options=nil)
     # TODO
+    to = Rubinius::Type.coerce_to_encoding to
+    @encoding = to
+    self
+  end
+
+  def encode(to=undefined, from=undefined, options=nil)
+    dup.encode!(to, from, options)
+  end
+
+  def force_encoding(enc)
+    @ascii_only = @valid_encoding = nil
+    @encoding = Rubinius::Type.coerce_to_encoding enc
     self
   end
 
   def hex
     return 0 if self.chars.first == "_"
     to_inum(16, false)
-  end
-
-  def partition(pattern)
-    unless pattern.is_a? Regexp
-      pattern = Rubinius::Type.coerce_to(pattern, String, :to_str)
-    end
-    i = index(pattern)
-    return [self, "", ""] unless i
-
-    if pattern.is_a? Regexp
-      match = Regexp.last_match
-      [match.pre_match, match[0], match.post_match]
-    else
-      last = i+pattern.length
-      [self[0...i], self[i...last], self[last...length]]
-    end
   end
 
   def prepend(other)
@@ -73,15 +100,6 @@ class String
   def ord
     raise ArgumentError, 'empty string' if empty?
     @data[0]
-  end
-
-  def encoding
-    # TODO: temporary until encoding is set on create.
-    @encoding ||= Encoding.find("us-ascii")
-  end
-
-  def force_encoding(name)
-    self
   end
 
   # Reverses <i>self</i> in place.
@@ -278,6 +296,10 @@ class String
 
   alias_method :next, :succ
   alias_method :next!, :succ!
+
+  def to_c
+    Complexifier.new(self).convert
+  end
 
   def to_r
     Rationalizer.new(self).convert

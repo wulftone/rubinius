@@ -63,12 +63,6 @@ class Float < Numeric
     a.divmod b
   end
 
-  def **(other)
-    Rubinius.primitive :float_pow
-    b, a = math_coerce other
-    a ** b
-  end
-
   def %(other)
     return 0 / 0.to_f if other == 0
     Rubinius.primitive :float_mod
@@ -120,7 +114,7 @@ class Float < Numeric
 
   def eql?(other)
     Rubinius.primitive :float_eql
-    raise PrimitiveFailure, "Float#eql? primitive failed"
+    false
   end
 
   def nan?
@@ -169,11 +163,6 @@ class Float < Numeric
   def to_packed(size)
     Rubinius.primitive :float_to_packed
     raise PrimitiveFailure, "float_to_packed failed"
-  end
-
-  def round
-    Rubinius.primitive :float_round
-    raise PrimitiveFailure, "float_round failed"
   end
 
   def ceil

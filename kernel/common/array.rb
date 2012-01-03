@@ -364,12 +364,6 @@ class Array
     end
   end
 
-  # Returns a copy of self with all nil elements removed
-  def compact
-    out = dup
-    out.compact! || out
-  end
-
   # Removes all nil elements from self, returns nil if no changes
   def compact!
     Rubinius.check_frozen
@@ -952,14 +946,6 @@ class Array
     nil
   end
 
-  # Returns a new Array by removing items from self for
-  # which block is true. An Array is also returned when
-  # invoked on subclasses. See #reject!
-  def reject(&block)
-    return to_enum(:reject) unless block_given?
-    dup.delete_if(&block)
-  end
-
   # Equivalent to #delete_if except that returns nil if
   # no changes were made.
   def reject!(&block)
@@ -1088,11 +1074,6 @@ class Array
     return [] if new_size <= 0
 
     new_range n, new_size
-  end
-
-  # Returns a new array with elements of this array shuffled.
-  def shuffle
-    dup.shuffle!
   end
 
   # Shuffles elements in self in place.

@@ -54,7 +54,7 @@ namespace rubinius {
       T* new_object(Class *cls) {
         return reinterpret_cast<T*>(vm_->new_object_typed(cls, sizeof(T), T::type));
       }
-    
+
     ThreadState* thread_state() {
       return vm_->thread_state();
     }
@@ -124,6 +124,14 @@ namespace rubinius {
       if(unlikely(shared_.check_gc_p())) {
         vm_->collect_maybe(gct, frame);
       }
+    }
+
+    void lock() {
+      vm_->lock(vm_);
+    }
+
+    void unlock() {
+      vm_->unlock(vm_);
     }
 
   };

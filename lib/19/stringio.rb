@@ -69,7 +69,7 @@ class StringIO
     if $KCODE == "UTF8"
       lookup = 7.downto(4)
       while c = read(1) do
-        n = c[0]
+        n = c[0].ord
         leftmost_zero_bit = lookup.find{|i| n[i].zero? }
         case leftmost_zero_bit
         when 7 # ASCII
@@ -93,11 +93,10 @@ class StringIO
 
   alias_method :chars, :each_char
 
-  def each(sep = $/)
-    return to_enum :each, sep unless block_given?
+  def each(*args)
+    return to_enum :each, *args unless block_given?
     raise IOError, "not opened for reading" unless @readable
-    sep = StringValue(sep) unless sep.nil?
-    while line = getline(sep)
+    while line = getline(*args)
       yield line
     end
     self
@@ -192,10 +191,14 @@ class StringIO
     @pos += 1 unless eof?
     char
   end
-  alias_method :getbyte, :getc
 
-  def gets(sep = $/)
-    $_ = getline(sep)
+  def getbyte
+    char = getc
+    char && char.ord
+  end
+
+  def gets(*args)
+    $_ = getline(*args)
   end
 
   def isatty
@@ -318,15 +321,15 @@ class StringIO
     readchar.getbyte(0)
   end
 
-  def readline(sep = $/)
+  def readline(*args)
     raise IO::EOFError, "end of file reached" if eof?
-    $_ = getline(sep)
+    $_ = getline(*args)
   end
 
-  def readlines(sep = $/)
+  def readlines(*args)
     raise IOError, "not opened for reading" unless @readable
     ary = []
-    while line = getline(sep)
+    while line = getline(*args)
       ary << line
     end
     ary
@@ -404,11 +407,15 @@ class StringIO
 
   def sysread(length = nil, buffer = "")
     str = read(length, buffer)
-    raise IO::EOFError, "end of file reached" if str.nil?
+    if str.nil?
+      buffer.clear
+      raise IO::EOFError, "end of file reached"
+    end
     str
   end
 
   alias_method :readpartial, :sysread
+  alias_method :read_nonblock, :sysread
 
   def tell
     @pos
@@ -502,16 +509,39 @@ class StringIO
       @string.replace("") if (mode & IO::TRUNC) != 0
     end
 
-    def getline(sep = $/)
+    def getline(*args)
       raise IOError unless @readable
+
+      sep = nil
+      limit = nil
+
+      case args.size
+      when 0
+        sep = $/
+      when 1
+        if args[0]
+          if limit = Rubinius::Type.check_convert_type(args[0], Integer, :to_int)
+            return '' if limit == 0
+          else
+            sep = Rubinius::Type.coerce_to(args[0], String, :to_str)
+          end
+        end
+      when 2
+        sep = Rubinius::Type.coerce_to(args[0], String, :to_str)
+        limit = Rubinius::Type.coerce_to(args[1], Integer, :to_int)
+      end
 
       sep = StringValue(sep) unless sep.nil?
 
       return nil if eof?
 
       if sep.nil?
-        line = @string[@pos .. -1]
-        @pos = @string.size
+        if limit
+          line = @string[@pos ... @pos + limit]
+        else
+          line = @string[@pos .. -1]
+        end
+        @pos += line.size
       elsif sep.empty?
         if stop = @string.index("\n\n", @pos)
           stop += 2
@@ -526,12 +556,20 @@ class StringIO
         end
       else
         if stop = @string.index(sep, @pos)
-          stop += sep.length
+          if limit && stop - @pos >= limit
+            stop = @pos + limit
+          else
+            stop += sep.length
+          end
           line = @string[@pos ... stop]
           @pos = stop
         else
-          line = @string[@pos .. -1]
-          @pos = @string.size
+          if limit
+            line = @string[@pos ... @pos + limit]
+          else
+            line = @string[@pos .. -1]
+          end
+          @pos += line.size
         end
       end
 
