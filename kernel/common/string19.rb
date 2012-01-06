@@ -12,38 +12,9 @@ class String
 
   private :initialize
 
-  def byteslice(start_or_range, length=undefined)
-    if start_or_range.kind_of? Range
-      start = Rubinius::Type.coerce_to start_or_range.begin, Fixnum, :to_int
-      start += @num_bytes if start < 0
-      return if start < 0 or start > @num_bytes
-
-      finish = Rubinius::Type.coerce_to start_or_range.end, Fixnum, :to_int
-      finish += @num_bytes if finish < 0
-
-      finish += 1 unless start_or_range.exclude_end?
-      length = finish - start
-
-      return substring 0, 0 if length < 0
-    else
-      start = Rubinius::Type.coerce_to start_or_range, Fixnum, :to_int
-      start += @num_bytes if start < 0
-
-      if length.equal? undefined
-        return if start == @num_bytes
-        length = 1
-      else
-        length = Rubinius::Type.coerce_to length, Fixnum, :to_int
-        return if length < 0
-      end
-
-      return if start < 0 or start > @num_bytes
-    end
-
-    substring start, length
-  end
-
   def encode!(to=undefined, from=undefined, options=nil)
+    Rubinius.check_frozen
+
     # TODO
     to = Rubinius::Type.coerce_to_encoding to
     @encoding = to
@@ -136,7 +107,7 @@ class String
     end
 
     if (j += 1) < @num_bytes
-      @num_bytes = j
+      self.num_bytes = j
       self
     else
       nil
@@ -475,7 +446,7 @@ class String
     return if (stop += 1) == @num_bytes
 
     modify!
-    @num_bytes = stop
+    self.num_bytes = stop
     self
   end
 
@@ -500,7 +471,7 @@ class String
     return if start == 0
 
     modify!
-    @num_bytes = @num_bytes - start
+    self.num_bytes -= start
     @data.move_bytes start, @num_bytes, 0
     self
   end
@@ -516,9 +487,9 @@ class String
 
     if @num_bytes > 1 and
         @data[@num_bytes-1] == 10 and @data[@num_bytes-2] == 13
-      @num_bytes = @num_bytes - 2
+      self.num_bytes -= 2
     else
-      @num_bytes = @num_bytes - 1
+      self.num_bytes -= 1
     end
 
     self
@@ -539,14 +510,14 @@ class String
 
       c = @data[@num_bytes-1]
       if c == 10 # ?\n
-        @num_bytes -= 1 if @num_bytes > 1 && @data[@num_bytes-2] == 13 # ?\r
+        self.num_bytes -= 1 if @num_bytes > 1 && @data[@num_bytes-2] == 13 # ?\r
       elsif c != 13 # ?\r
         return
       end
 
       # don't use modify! because it will dup the data when we don't need to.
       @hash_value = nil
-      @num_bytes = @num_bytes - 1
+      self.num_bytes -= 1
       return self
     end
 
@@ -556,14 +527,14 @@ class String
     if (sep == $/ && sep == DEFAULT_RECORD_SEPARATOR) || sep == "\n"
       c = @data[@num_bytes-1]
       if c == 10 # ?\n
-        @num_bytes -= 1 if @num_bytes > 1 && @data[@num_bytes-2] == 13 # ?\r
+        self.num_bytes -= 1 if @num_bytes > 1 && @data[@num_bytes-2] == 13 # ?\r
       elsif c != 13 # ?\r
         return
       end
 
       # don't use modify! because it will dup the data when we don't need to.
       @hash_value = nil
-      @num_bytes = @num_bytes - 1
+      self.num_bytes -= 1
     elsif sep.size == 0
       size = @num_bytes
       while size > 0 && @data[size-1] == 10 # ?\n
@@ -578,14 +549,14 @@ class String
 
       # don't use modify! because it will dup the data when we don't need to.
       @hash_value = nil
-      @num_bytes = size
+      self.num_bytes = size
     else
       size = sep.size
       return if size > @num_bytes || sep.compare_substring(self, -size, size) != 0
 
       # don't use modify! because it will dup the data when we don't need to.
       @hash_value = nil
-      @num_bytes = @num_bytes - size
+      self.num_bytes -= size
     end
 
     return self
@@ -607,7 +578,7 @@ class String
     @shared = true
     other.shared!
     @data = other.__data__
-    @num_bytes = other.num_bytes
+    self.num_bytes = other.num_bytes
     @hash_value = nil
 
     taint if other.tainted?
@@ -643,7 +614,7 @@ class String
       end
     end
 
-    taint if other.tainted?
+    Rubinius::Type.infect(self, other)
     append(other)
   end
   alias_method :concat, :<<
@@ -653,11 +624,7 @@ class String
   #   a = "abcde"
   #   a.chr    #=> "a"
   def chr
-    if empty?
-      self
-    else
-      self[0]
-    end
+    substring 0, 1
   end
 
   # Splits <i>self</i> using the supplied parameter as the record separator
@@ -686,8 +653,8 @@ class String
   #   Example three
   #   "hello\n\n\n"
   #   "world"
-  def each_line(sep=$/)
-    return to_enum(:each_line, sep) unless block_given?
+  def lines(sep=$/)
+    return to_enum(:lines, sep) unless block_given?
 
     # weird edge case.
     if sep.nil?
@@ -722,7 +689,7 @@ class String
         # string ends with \n's
         break if pos == @num_bytes
 
-        str = substring(pos, match_size)
+        str = byteslice pos, match_size
         yield str unless str.empty?
 
         # detect mutation within the block
@@ -734,7 +701,7 @@ class String
       end
 
       # No more separates, but we need to grab the last part still.
-      fin = substring(pos, @num_bytes - pos)
+      fin = byteslice pos, @num_bytes - pos
       yield fin if fin and !fin.empty?
 
     else
@@ -748,21 +715,21 @@ class String
         break unless nxt
 
         match_size = nxt - pos
-        str = unmodified_self.substring(pos, match_size + pat_size)
+        str = unmodified_self.byteslice pos, match_size + pat_size
         yield str unless str.empty?
 
         pos = nxt + pat_size
       end
 
       # No more separates, but we need to grab the last part still.
-      fin = unmodified_self.substring(pos, @num_bytes - pos)
+      fin = unmodified_self.byteslice pos, @num_bytes - pos
       yield fin unless fin.empty?
     end
 
     self
   end
 
-  alias_method :lines, :each_line
+  alias_method :each_line, :lines
 
   # Returns a copy of <i>self</i> with <em>all</em> occurrences of <i>pattern</i>
   # replaced with either <i>replacement</i> or the value of the block. The
@@ -814,7 +781,7 @@ class String
 
     last_end = 0
     offset = nil
-    ret = substring(0, 0) # Empty string and string subclass
+    ret = byteslice 0, 0 # Empty string and string subclass
 
     last_match = nil
     match = pattern.match_from self, last_end
@@ -832,7 +799,7 @@ class String
       pre_len = nd-last_end+1
 
       if pre_len > 0
-        ret.append substring(last_end, pre_len)
+        ret.append byteslice(last_end, pre_len)
       end
 
       if use_yield || hash
@@ -884,7 +851,7 @@ class String
 
     Regexp.last_match = last_match
 
-    str = substring(last_end, @num_bytes-last_end+1)
+    str = byteslice last_end, @num_bytes-last_end+1
     ret.append str if str
 
     ret.taint if tainted || self.tainted?
@@ -921,7 +888,7 @@ class String
       return to_enum(:gsub, pattern, replacement)
     end
 
-    raise RuntimeError, "can't modify frozen String" if frozen?
+    Rubinius.check_frozen
 
     tainted = false
     untrusted = untrusted?
@@ -944,7 +911,7 @@ class String
 
     last_end = 0
     offset = nil
-    ret = substring(0, 0) # Empty string and string subclass
+    ret = byteslice 0, 0 # Empty string and string subclass
 
     last_match = nil
     match = pattern.match_from self, last_end
@@ -965,7 +932,7 @@ class String
       pre_len = nd-last_end+1
 
       if pre_len > 0
-        ret.append substring(last_end, pre_len)
+        ret.append byteslice(last_end, pre_len)
       end
 
       if use_yield || hash
@@ -1017,7 +984,7 @@ class String
 
     Regexp.last_match = last_match
 
-    str = substring(last_end, @num_bytes-last_end+1)
+    str = byteslice last_end, @num_bytes-last_end+1
     ret.append str if str
 
     self.taint if tainted

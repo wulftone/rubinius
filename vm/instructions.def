@@ -1454,6 +1454,7 @@ instruction string_build(count) [ +count -- string ]
   size_t size = 0;
 
   bool tainted = false;
+  bool untrusted = false;
 
   // Figure out the total size
   for(int i = 0; i < count; i++) {
@@ -1461,12 +1462,13 @@ instruction string_build(count) [ +count -- string ]
 
     if(obj->reference_p()) {
       tainted |= obj->is_tainted_p();
+      untrusted |= obj->is_untrusted_p();
     }
 
     String* str = try_as<String>(obj);
 
     if(str) {
-      native_int cur_size = str->size();
+      native_int cur_size = str->byte_size();
       native_int data_size = as<ByteArray>(str->data())->size();
       if(unlikely(cur_size > data_size)) {
         cur_size = data_size;
@@ -1479,8 +1481,10 @@ instruction string_build(count) [ +count -- string ]
       // this way instead.
 
       str = obj->to_s(state, false);
+
       tainted |= str->is_tainted_p();
-      native_int cur_size = str->size();
+      untrusted |= str->is_untrusted_p();
+      native_int cur_size = str->byte_size();
       native_int data_size = as<ByteArray>(str->data())->size();
       if(unlikely(cur_size > data_size)) {
         cur_size = data_size;
@@ -1504,7 +1508,7 @@ instruction string_build(count) [ +count -- string ]
   for(int i = count - 1; i >= 0; i--) {
     Object* obj = stack_back(i);
     String* sub = as<String>(obj);
-    native_int sub_size = sub->size();
+    native_int sub_size = sub->byte_size();
     native_int data_size = as<ByteArray>(sub->data())->size();
     if(unlikely(sub_size > data_size)) {
       sub_size = data_size;
@@ -1516,6 +1520,7 @@ instruction string_build(count) [ +count -- string ]
   }
 
   if(tainted) str->set_tainted();
+  if(untrusted) str->set_untrusted();
 
   stack_clear(count);
   stack_push(str);

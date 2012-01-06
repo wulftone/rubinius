@@ -164,6 +164,7 @@
 
 #define HAVE_RB_DEFAULT_INTERNAL_ENCODING  1
 
+#define HAVE_RB_ENCDB_ALIAS                1
 #define HAVE_RB_ENC_ASSOCIATE              1
 #define HAVE_RB_ENC_ASSOCIATE_INDEX        1
 #define HAVE_RB_ENC_COPY                   1
@@ -173,6 +174,10 @@
 #define HAVE_RB_ENC_FROM_INDEX             1
 #define HAVE_RB_ENC_GET                    1
 #define HAVE_RB_ENC_GET_INDEX              1
+#define HAVE_RB_ENC_SET_INDEX              1
+#define HAVE_RB_ENC_TO_INDEX               1
+
+#define HAVE_RB_USASCII_STR_NEW_CSTR       1
 
 #define HAVE_RB_TO_ENCODING                1
 #define HAVE_RB_TO_ENCODING_INDEX          1
@@ -303,6 +308,7 @@
 /* Object */
 #define HAVE_OBJ_TAINT                     1
 #define HAVE_OBJ_TAINTED                   1
+#define HAVE_OBJ_INFECT                    1
 #define HAVE_RB_ANY_TO_S                   1
 #define HAVE_RB_ATTR_GET                   1
 #define HAVE_RB_CHECK_ARRAY_TYPE           1

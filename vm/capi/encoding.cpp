@@ -17,6 +17,14 @@ using namespace rubinius;
 using namespace rubinius::capi;
 
 extern "C" {
+  int rb_encdb_alias(const char *alias, const char *orig) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    Encoding::alias(env->state(), alias, orig);
+
+    return Encoding::find_index(env->state(), alias);
+  }
+
   rb_encoding* rb_utf8_encoding() {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
@@ -110,12 +118,32 @@ extern "C" {
     } else if(Symbol* sym = try_as<Symbol>(val)) {
       enc = sym->encoding(env->state());
     } else {
-      rb_raise(rb_eArgError, "object does not have an associated Encoding");
+      // MRI permits associating an Encoding with anything.
+      Object* e = val->get_ivar(env->state(), env->state()->symbol("__encoding__"));
+      if(!(enc = try_as<Encoding>(e))) enc = nil<Encoding>();
     }
 
     if(enc->nil_p()) return -1;
 
     return Encoding::find_index(env->state(), enc->get_encoding()->name);
+  }
+
+  void rb_enc_set_index(VALUE obj, int index) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    Encoding* enc = Encoding::from_index(env->state(), index);
+    Object* val = env->get_object(obj);
+
+    if(String* str = try_as<String>(val)) {
+      str->encoding(env->state(), enc);
+    } else if(Regexp* reg = try_as<Regexp>(val)) {
+      reg->encoding(env->state(), enc);
+    } else if(Symbol* sym = try_as<Symbol>(val)) {
+      sym->encoding(env->state(), enc);
+    } else {
+      // MRI permits associating an Encoding with anything.
+      val->set_ivar(env->state(), env->state()->symbol("__encoding__"), enc);
+    }
   }
 
   rb_encoding* rb_enc_compatible(VALUE str1, VALUE str2) {
@@ -215,6 +243,14 @@ extern "C" {
     Encoding* enc = Encoding::from_index(env->state(), index);
     if(enc->nil_p()) return 0;
     return enc->get_encoding();
+  }
+
+  int rb_enc_to_index(rb_encoding* enc) {
+    if(enc) {
+      return rb_enc_find_index(rb_enc_name(enc));
+    } else {
+      return 0;
+    }
   }
 
   VALUE rb_enc_from_encoding(rb_encoding *enc) {

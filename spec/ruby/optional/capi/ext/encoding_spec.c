@@ -75,6 +75,14 @@ static VALUE encoding_spec_rb_default_internal_encoding(VALUE self) {
 }
 #endif
 
+#ifdef HAVE_RB_ENCDB_ALIAS
+/* Not exposed by MRI C-API encoding.h but used in the pg gem. */
+extern int rb_encdb_alias(const char* alias, const char* orig);
+
+static VALUE encoding_spec_rb_encdb_alias(VALUE self, VALUE alias, VALUE orig) {
+  return INT2NUM(rb_encdb_alias(RSTRING_PTR(alias), RSTRING_PTR(orig)));
+}
+#endif
 
 #if defined(HAVE_RB_ENC_ASSOCIATE) && defined(HAVE_RB_ENC_FIND)
 static VALUE encoding_spec_rb_enc_associate(VALUE self, VALUE obj, VALUE enc) {
@@ -128,6 +136,26 @@ static VALUE encoding_spec_rb_enc_get(VALUE self, VALUE obj) {
 #ifdef HAVE_RB_ENC_GET_INDEX
 static VALUE encoding_spec_rb_enc_get_index(VALUE self, VALUE obj) {
   return INT2NUM(rb_enc_get_index(obj));
+}
+#endif
+
+#if defined(HAVE_RB_ENC_SET_INDEX) \
+      && defined(HAVE_RB_ENC_FIND_INDEX) \
+      && defined(HAVE_RB_ENC_FIND_INDEX)
+static VALUE encoding_spec_rb_enc_set_index(VALUE self, VALUE obj, VALUE index) {
+  int i = NUM2INT(index);
+
+  rb_encoding* enc = rb_enc_from_index(i);
+  rb_enc_set_index(obj, i);
+
+  return rb_ary_new3(2, rb_str_new2(rb_enc_name(enc)),
+                     rb_str_new2(rb_enc_name(rb_enc_get(obj))));
+}
+#endif
+
+#if defined(HAVE_RB_ENC_TO_INDEX) && defined(HAVE_RB_ENC_FIND)
+static VALUE encoding_spec_rb_enc_to_index(VALUE self, VALUE name) {
+  return INT2NUM(rb_enc_to_index(rb_enc_find(RSTRING_PTR(name))));
 }
 #endif
 
@@ -192,7 +220,9 @@ void Init_encoding_spec() {
                    encoding_spec_rb_default_internal_encoding, 0);
 #endif
 
-
+#ifdef HAVE_RB_ENCDB_ALIAS
+  rb_define_method(cls, "rb_encdb_alias", encoding_spec_rb_encdb_alias, 2);
+#endif
 
 #ifdef HAVE_RB_ENC_ASSOCIATE
   rb_define_method(cls, "rb_enc_associate", encoding_spec_rb_enc_associate, 2);
@@ -228,6 +258,16 @@ void Init_encoding_spec() {
 
 #ifdef HAVE_RB_ENC_GET_INDEX
   rb_define_method(cls, "rb_enc_get_index", encoding_spec_rb_enc_get_index, 1);
+#endif
+
+#if defined(HAVE_RB_ENC_SET_INDEX) \
+      && defined(HAVE_RB_ENC_FIND_INDEX) \
+      && defined(HAVE_RB_ENC_FIND_INDEX)
+  rb_define_method(cls, "rb_enc_set_index", encoding_spec_rb_enc_set_index, 2);
+#endif
+
+#if defined(HAVE_RB_ENC_TO_INDEX) && defined(HAVE_RB_ENC_FIND)
+  rb_define_method(cls, "rb_enc_to_index", encoding_spec_rb_enc_to_index, 1);
 #endif
 
 #ifdef HAVE_RB_TO_ENCODING

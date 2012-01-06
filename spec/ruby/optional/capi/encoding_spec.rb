@@ -1,4 +1,5 @@
 require File.expand_path('../spec_helper', __FILE__)
+require File.expand_path('../fixtures/encoding', __FILE__)
 
 ruby_version_is "1.9" do
   load_extension('encoding')
@@ -6,6 +7,13 @@ ruby_version_is "1.9" do
   describe "C-API Encoding function" do
     before :each do
       @s = CApiEncodingSpecs.new
+    end
+
+    describe "rb_encdb_alias" do
+      it "creates an alias for an existing Encoding" do
+        @s.rb_encdb_alias("ZOMGWTFBBQ", "UTF-8").should >= 0
+        Encoding.find("ZOMGWTFBBQ").name.should == "UTF-8"
+      end
     end
 
     describe "rb_enc_find" do
@@ -88,6 +96,36 @@ ruby_version_is "1.9" do
 
       it "returns the index of the encoding of a Symbol" do
         @s.rb_enc_get_index(:symbol).should >= 0
+      end
+
+      it "returns the index of the encoding of an Object" do
+        obj = mock("rb_enc_set_index")
+        @s.rb_enc_set_index(obj, 1)
+        @s.rb_enc_get_index(obj).should == 1
+      end
+    end
+
+    describe "rb_enc_set_index" do
+      it "sets the object's encoding to the Encoding specified by the index" do
+        obj = "abc"
+        result = @s.rb_enc_set_index(obj, 2)
+
+        # This is used because indexes should be considered implementation
+        # dependent. So a pair is returned:
+        #   [rb_enc_find_index()->name, rb_enc_get(obj)->name]
+        result.first.should == result.last
+      end
+
+      it "associates an encoding with a subclass of String" do
+        str = CApiEncodingSpecs::S.new "abc"
+        result = @s.rb_enc_set_index(str, 1)
+        result.first.should == result.last
+      end
+
+      it "associates an encoding with an object" do
+        obj = mock("rb_enc_set_index")
+        result = @s.rb_enc_set_index(obj, 1)
+        result.first.should == result.last
       end
     end
 
@@ -215,6 +253,16 @@ ruby_version_is "1.9" do
     describe "rb_filesystem_encindex" do
       it "returns an index for the filesystem encoding" do
         @s.rb_filesystem_encindex().should >= 0
+      end
+    end
+
+    describe "rb_enc_to_index" do
+      it "returns an index for the encoding" do
+        @s.rb_enc_to_index("UTF-8").should >= 0
+      end
+
+      it "returns 0 if the encoding is not defined" do
+        @s.rb_enc_to_index("FTU-81").should == 0
       end
     end
   end

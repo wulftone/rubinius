@@ -345,6 +345,35 @@ extern "C" {
     return Qnil;
   }
 
+  Object* rbx_destructure_inline_args(STATE, CallFrame* call_frame, Object* obj,
+                                      StackVariables* vars, int size)
+  {
+    Array* ary = try_as<Array>(obj);
+
+    if(!ary && RTEST(obj->respond_to(state, state->symbol("to_ary"), Qfalse))) {
+      obj = obj->send(state, call_frame, state->symbol("to_ary"));
+      if(Array* ary2 = try_as<Array>(obj)) {
+        ary = ary2;
+      } else {
+        Exception::type_error(state, "to_ary must return an Array", call_frame);
+        return 0;
+      }
+    }
+
+    if(ary) {
+      size_t limit = MIN((int)ary->size(), size);
+
+      for(size_t i = 0; i < limit; i++) {
+        vars->set_local(i, ary->get(state, i));
+      }
+    } else {
+      assert(size > 0);
+      vars->set_local(0, obj);
+    }
+
+    return Qnil;
+  }
+
   Object* rbx_cast_multi_value(STATE, CallFrame* call_frame, Object* top) {
     if(kind_of<Array>(top)) return top;
     return Array::to_ary(state, top, call_frame);
@@ -1065,7 +1094,7 @@ extern "C" {
       String* str = try_as<String>(obj);
 
       if(str) {
-        size += str->size();
+        size += str->byte_size();
       } else {
         // This isn't how MRI does this. If sub isn't a String, it converts
         // the original object via any_to_s, not the bad value returned from #to_s.
@@ -1073,7 +1102,7 @@ extern "C" {
         // this way instead.
 
         str = obj->to_s(state, false);
-        size += str->size();
+        size += str->byte_size();
 
         parts[i] = str;
       }
@@ -1085,8 +1114,8 @@ extern "C" {
     for(int i = 0; i < count; i++) {
       // We can force here because we've typed check them above.
       String* sub = force_as<String>(parts[i]);
-      memcpy(pos, sub->byte_address(), sub->size());
-      pos += sub->size();
+      memcpy(pos, sub->byte_address(), sub->byte_size());
+      pos += sub->byte_size();
     }
 
     return str;
