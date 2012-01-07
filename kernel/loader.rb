@@ -1,3 +1,5 @@
+# -*- encoding: us-ascii -*-
+
 TOPLEVEL_BINDING = binding()
 
 # Default kcode
@@ -568,7 +570,7 @@ to rebuild the compiler.
       @stage = "loading Gemfile"
 
       if @load_gemfile
-        require 'rubygems' unless @enable_gems
+        require 'rubygems'
         require 'bundler/setup'
         @load_gemfile = false
       end

@@ -1,3 +1,5 @@
+# -*- encoding: us-ascii -*-
+
 class Regexp
   ValidKcode    = [110, 101, 115, 117]  # [?n,?e,?s,?u]
   KcodeValue    = [16, 32, 48, 64]
@@ -258,12 +260,12 @@ class Regexp
 
     str = StringValue(str)
 
-    Regexp.last_match = search_region(str, 0, str.size, true)
+    Regexp.last_match = search_region(str, 0, str.bytesize, true)
   end
 
   def match_from(str, count)
     return nil unless str
-    search_region(str, count, str.size, true)
+    search_region(str, count, str.bytesize, true)
   end
 
   class SourceParser
@@ -368,12 +370,12 @@ class Regexp
 
     # TODO: audit specs for this method when specs are running
     def create_parts
-      return unless @index < @source.size
+      return unless @index < @source.bytesize
       char =  @source.getbyte(@index).chr
       case char
       when '('
         idx = @index + 1
-        if idx < @source.size and @source.getbyte(idx).chr == '?'
+        if idx < @source.bytesize and @source.getbyte(idx).chr == '?'
           process_group
         else
           push_current_character!
@@ -639,7 +641,7 @@ class MatchData
   end
 
   def post_match
-    nd = @source.size - 1
+    nd = @source.bytesize - 1
     st = @full.at(1)
     @source.byteslice(st, nd-st+1)
   end

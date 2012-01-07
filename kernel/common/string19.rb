@@ -1,3 +1,5 @@
+# -*- encoding: us-ascii -*-
+
 class String
   def self.try_convert(obj)
     Rubinius::Type.try_convert obj, String, :to_str
@@ -11,6 +13,15 @@ class String
   end
 
   private :initialize
+
+  def codepoints
+    return to_enum :codepoints unless block_given?
+
+    chars { |c| yield c.ord }
+    self
+  end
+
+  alias_method :each_codepoint, :codepoints
 
   def encode!(to=undefined, from=undefined, options=nil)
     Rubinius.check_frozen
@@ -66,11 +77,6 @@ class String
       end
     end
     self
-  end
-
-  def ord
-    raise ArgumentError, 'empty string' if empty?
-    @data[0]
   end
 
   # Reverses <i>self</i> in place.
@@ -588,30 +594,13 @@ class String
   alias_method :initialize_copy, :replace
   # private :initialize_copy
 
-  # Returns a new string with the characters from <i>self</i> in reverse order.
-  #
-  #   "stressed".reverse   #=> "desserts"
-
-  # Append --- Concatenates the given object to <i>self</i>. If the object is a
-  # <code>Fixnum</code> between 0 and 255, it is converted to a character before
-  # concatenation.
-  #
-  #   a = "hello "
-  #   a << "world"   #=> "hello world"
-  #   a.concat(33)   #=> "hello world!"
   def <<(other)
     modify!
 
-    unless other.kind_of? String
-      if other.kind_of? Integer
-        if other >= 0 and other <= 255
-          other = other.chr
-        else
-          raise RangeError, "negative value for character"
-        end
-      else
-        other = StringValue(other)
-      end
+    if other.kind_of? Integer
+      other = other.chr(encoding)
+    else
+      other = StringValue(other)
     end
 
     Rubinius::Type.infect(self, other)
@@ -829,7 +818,7 @@ class String
 
       if ma_start == ma_end
         if char = find_character(offset)
-          offset += char.size
+          offset += char.bytesize
         else
           offset += 1
         end
@@ -962,7 +951,7 @@ class String
 
       if ma_start == ma_end
         if char = find_character(offset)
-          offset += char.size
+          offset += char.bytesize
         else
           offset += 1
         end

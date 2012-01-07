@@ -1,3 +1,5 @@
+# -*- encoding: us-ascii -*-
+
 ##
 # Some terminology notes:
 #
@@ -640,7 +642,7 @@ class Module
     end
   end
 
-  def dynamic_method(name, file=:dynamic, line=1)
+  def dynamic_method(name, file="(dynamic)", line=1)
     g = Rubinius::Generator.new
     g.name = name.to_sym
     g.file = file.to_sym

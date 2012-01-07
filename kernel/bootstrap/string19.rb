@@ -1,3 +1,5 @@
+# -*- encoding: us-ascii -*-
+
 class String
   attr_writer :encoding
   attr_writer :ascii_only
@@ -16,6 +18,12 @@ class String
   def encoding
     Rubinius.primitive :string_encoding
     raise PrimitiveFailure, "String#encoding primitive failed"
+  end
+
+  def ord
+    Rubinius.primitive :string_codepoint
+    raise ArgumentError, 'empty string' if empty?
+    raise ArgumentError, "invalid byte sequence in #{encoding}"
   end
 
   def valid_encoding?
