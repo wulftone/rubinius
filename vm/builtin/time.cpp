@@ -20,6 +20,7 @@
 #include <time.h>
 
 #include "windows_compat.h"
+#include "configuration.hpp"
 
 namespace rubinius {
   void Time::init(STATE) {
@@ -28,6 +29,16 @@ namespace rubinius {
   }
 
   Time* Time::now(STATE, Object* self) {
+    Time* tm = state->new_object<Time>(as<Class>(self));
+
+#ifdef HAVE_CLOCK_GETTIME
+    struct timespec ts;
+
+    ::clock_gettime(CLOCK_REALTIME, &ts);
+
+    tm->seconds_ = ts.tv_sec;
+    tm->nanoseconds_ = ts.tv_nsec;
+#else
     struct timeval tv;
 
     /* don't fill in the 2nd argument here. getting the timezone here
@@ -35,10 +46,9 @@ namespace rubinius {
      */
     ::gettimeofday(&tv, NULL);
 
-    Time* tm = state->new_object<Time>(as<Class>(self));
-
     tm->seconds_ = tv.tv_sec;
-    tm->microseconds_ = tv.tv_usec;
+    tm->nanoseconds_ = tv.tv_usec * 1000;
+#endif
 
     tm->is_gmt(state, Qfalse);
 
@@ -49,28 +59,32 @@ namespace rubinius {
 #define NDIV(x,y) (-(-((x)+1)/(y))-1)
 #define NMOD(x,y) ((y)-(-((x)+1)%(y))-1)
 
-  Time* Time::specific(STATE, Object* self, Integer* sec, Integer* usec,
+  Time* Time::specific(STATE, Object* self, Integer* sec, Integer* nsec,
                        Object* gmt)
   {
     Time* tm = state->new_object<Time>(as<Class>(self));
 
     if(sizeof(time_t) == sizeof(long long)) {
       tm->seconds_ = sec->to_long_long();
-      tm->microseconds_ = usec->to_long_long();
+      tm->nanoseconds_ = nsec->to_long_long();
     } else {
       tm->seconds_ = sec->to_native();
-      tm->microseconds_ = usec->to_native();
+      tm->nanoseconds_ = nsec->to_native();
     }
 
     // Do a little overflow cleanup.
-    if(tm->microseconds_ >= 1000000) {
-      tm->seconds_ += tm->microseconds_ / 1000000;
-      tm->microseconds_ %= 1000000;
+    if(tm->nanoseconds_ >= 1000000000) {
+      tm->seconds_ += tm->nanoseconds_ / 1000000000;
+      tm->nanoseconds_ %= 1000000000;
     }
 
-    if(tm->microseconds_ < 0) {
-      tm->seconds_ += NDIV(tm->microseconds_,1000000);
-      tm->microseconds_ = NMOD(tm->microseconds_, 1000000);
+    if(tm->nanoseconds_ < 0) {
+      tm->seconds_ += NDIV(tm->nanoseconds_, 1000000000);
+      tm->nanoseconds_ = NMOD(tm->nanoseconds_, 1000000000);
+    }
+
+    if(LANGUAGE_18_ENABLED(state)) {
+      tm->nanoseconds_ -= (tm->nanoseconds_ % 1000);
     }
 
     tm->is_gmt(state, RTEST(gmt) ? Qtrue : Qfalse);
@@ -80,7 +94,7 @@ namespace rubinius {
 
   Time* Time::from_array(STATE, Object* self, 
                       Fixnum* sec, Fixnum* min, Fixnum* hour,
-                      Fixnum* mday, Fixnum* mon, Fixnum* year, Fixnum* usec,
+                      Fixnum* mday, Fixnum* mon, Fixnum* year, Fixnum* nsec,
                       Fixnum* isdst, Object* from_gmt) {
     struct tm tm;
 
@@ -136,21 +150,21 @@ namespace rubinius {
       seconds = mktime_extended(&tm, utc_p, &err);
     }
 
-    if(err) return (Time*)Primitives::failure();
+    if(err) Exception::argument_error(state, "time out of range");
 
     Time* obj = state->new_object<Time>(as<Class>(self));
     obj->seconds_ = seconds;
-    obj->microseconds_ = usec->to_native();
+    obj->nanoseconds_ = nsec->to_native();
     obj->is_gmt(state, RTEST(from_gmt) ? Qtrue : Qfalse);
 
     return obj;
   }
 
-  Time* Time::dup(STATE) {
-    Time* tm = state->new_object<Time>(class_object(state));
-    tm->seconds_ = seconds_;
-    tm->microseconds_ = microseconds_;
-    tm->is_gmt(state, is_gmt_);
+  Time* Time::dup(STATE, Object* self, Time* other) {
+    Time* tm = state->new_object<Time>(as<Class>(self));
+    tm->seconds_ = other->seconds_;
+    tm->nanoseconds_ = other->nanoseconds_;
+    tm->is_gmt(state, other->is_gmt_);
     return tm;
   }
 

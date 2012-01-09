@@ -15,23 +15,7 @@
 #define YYDEBUG 1
 #define YYERROR_VERBOSE 1
 
-#include <stdio.h>
-#include <errno.h>
-#include <ctype.h>
-#include <string.h>
-#include <strings.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <assert.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
-#ifdef HAVE_HEADER_ALLOCA_H
-#include <alloca.h>
-#endif
-
-#include "ruby.h"
-
+#include "melbourne.hpp"
 #include "grammar19.hpp"
 #include "parser_state19.hpp"
 #include "visitor19.hpp"
@@ -384,7 +368,9 @@ static int scan_hex(const char *start, size_t len, size_t *retlen);
                                 (parser_state->utf8 = parser_utf8_encoding()))
 #define STR_NEW(p,n)          parser_enc_str_new((p), (n), parser_state->enc)
 #define STR_NEW0()            parser_enc_str_new(0, 0, parser_state->enc)
-#define STR_NEW3(p,n,e,func)  parser_str_new(parser_state, (p), (n), (e), (func), parser_state->enc)
+#define STR_NEW2(p)           parser_enc_str_new((p), strlen(p), parser_state->enc)
+#define STR_NEW3(p,n,e,func)  parser_str_new(parser_state, (p), (n), (e), \
+                                            (func), parser_state->enc)
 #define ENC_SINGLE(cr)        ((cr)==ENC_CODERANGE_7BIT)
 #define TOK_INTERN(mb)        parser_intern3(tok(), toklen(), parser_state->enc)
 
@@ -611,10 +597,7 @@ top_stmt        : stmt
                   }
                   '{' top_compstmt '}'
                   {
-                    /* TODO
-                    block_append( , $4);
-                    */
-                    $$ = NEW_BEGIN(0);
+                    $$ = NEW_PREEXE($4);
                   }
                 ;
 
@@ -6156,7 +6139,7 @@ parser_gettable(rb_parser_state* parser_state, ID id)
   } else if(id == keyword__LINE__) {
     return NEW_NUMBER(INT2FIX(ruby_sourceline));
   } else if(id == keyword__ENCODING__) {
-    return NEW_NIL(); // HACK this is a stub, replace this
+    return NEW_ENCODING(STR_NEW2(parser_enc_name(parser_state->enc)));
   } else if(is_local_id(id)) {
     if((in_block() && bv_defined(id)) || local_id(id)) {
       return NEW_LVAR(id);

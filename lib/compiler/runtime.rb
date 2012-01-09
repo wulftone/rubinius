@@ -58,6 +58,18 @@ module Rubinius
     def self.rbx_marshal_constant
       name
     end
+
+    def self.get_encoding(name)
+      if defined?(Encoding)
+        Encoding.find name
+      else
+        name
+      end
+    end
+
+    def self.pre_exe
+      yield
+    end
   end
 end
 

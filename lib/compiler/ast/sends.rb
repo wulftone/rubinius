@@ -248,6 +248,43 @@ module Rubinius
       end
     end
 
+    class PreExe < Node
+      attr_accessor :block
+
+      def initialize(line)
+        @line = line
+      end
+
+      def pre_bytecode(g)
+        pos(g)
+
+        g.push_state ClosedScope.new(@line)
+        g.state.push_name :BEGIN
+
+        g.push_literal Rubinius::Compiler::Runtime
+        @block.bytecode(g)
+        g.send_with_block :pre_exe, 0, false
+
+        g.state.pop_name
+        g.pop_state
+      end
+
+      def to_sexp
+      end
+
+      def pre_sexp
+        @block.to_sexp.insert 1, :pre_exe
+      end
+    end
+
+    class PreExe19 < PreExe
+      def pre_bytecode(g)
+        pos(g)
+
+        @block.body.bytecode(g)
+      end
+    end
+
     class PushActualArguments
       def initialize(pa)
         @arguments = pa.arguments
@@ -533,7 +570,7 @@ module Rubinius
     class Iter19 < Iter
       def initialize(line, arguments, body)
         @line = line
-        @arguments = arguments
+        @arguments = arguments || IterArguments.new(line, nil)
         @body = body || NilLiteral.new(line)
 
         if @body.kind_of?(Block) and @body.locals
