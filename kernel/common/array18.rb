@@ -319,46 +319,44 @@ class Array
     out = ""
     return "[...]" if Thread.detect_recursion self do
       sep = sep ? StringValue(sep) : $,
-      out.taint if sep.tainted? || tainted?
 
       # We've manually unwound the first loop entry for performance
       # reasons.
       x = @tuple[@start]
+
       case x
       when String
-        out.append x
+        # Nothing
       when Array
-        out.append x.join(sep)
+        x = x.join(sep)
       else
-        out.append x.to_s
+        x = x.to_s
       end
 
-      out.taint if x.tainted?
-
+      out << x
       total = @start + size()
       i = @start + 1
 
       while i < total
-        out.append sep
+        out << sep
 
         x = @tuple[i]
 
         case x
         when String
-          out.append x
+          # Nothing
         when Array
-          out.append x.join(sep)
+          x = x.join(sep)
         else
-          out.append x.to_s
+          x = x.to_s
         end
 
-        out.taint if x.tainted?
-
+        out << x
         i += 1
       end
     end
 
-    out
+    Rubinius::Type.infect(out, self)
   end
 
   ##

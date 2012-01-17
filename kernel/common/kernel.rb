@@ -239,16 +239,6 @@ module Kernel
 
   alias_method :object_id, :__id__
 
-  def id
-    Kernel.warn "Object#id IS deprecated; use Object#object_id OR ELSE."
-    __id__
-  end
-
-  def type
-    Kernel.warn "Object#type IS fully deprecated; use Object#class OR ELSE."
-    self.class
-  end
-
   # The "sorta" operator, also known as the case equality operator.
   # Generally while #eql? and #== are stricter, #=== is often used
   # to denote an acceptable match or inclusion. It returns true if
@@ -546,9 +536,7 @@ module Kernel
   end
 
   def to_s
-    str = "#<#{self.class}:0x#{self.__id__.to_s(16)}>"
-    str.taint if tainted?
-    return str
+    Rubinius::Type.infect("#<#{self.class}:0x#{self.__id__.to_s(16)}>", self)
   end
 
   ##

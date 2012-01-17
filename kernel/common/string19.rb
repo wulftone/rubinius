@@ -5,15 +5,6 @@ class String
     Rubinius::Type.try_convert obj, String, :to_str
   end
 
-  def initialize(arg = undefined)
-    Rubinius.check_frozen
-    replace StringValue(arg) unless arg.equal?(undefined)
-
-    self
-  end
-
-  private :initialize
-
   def codepoints
     return to_enum :codepoints unless block_given?
 
@@ -586,10 +577,9 @@ class String
     @data = other.__data__
     self.num_bytes = other.num_bytes
     @hash_value = nil
+    force_encoding(other.encoding)
 
-    taint if other.tainted?
-
-    self
+    Rubinius::Type.infect(self, other)
   end
   alias_method :initialize_copy, :replace
   # private :initialize_copy
@@ -598,9 +588,29 @@ class String
     modify!
 
     if other.kind_of? Integer
+      if encoding == Encoding::US_ASCII and other >= 128 and other < 256
+        force_encoding(Encoding::ASCII_8BIT)
+      end
+
       other = other.chr(encoding)
     else
       other = StringValue(other)
+    end
+
+    if encoding != other.encoding
+      if !encoding.ascii_compatible? or !other.encoding.ascii_compatible?
+        if empty? and !other.empty?
+          force_encoding(other.encoding)
+        elsif !other.empty?
+          raise Encoding::CompatibilityError,
+                "incompatible character encodings: #{encoding.name} and #{other.encoding.name}"
+        end
+      elsif ascii_only? and !other.ascii_only?
+        force_encoding(other.encoding)
+      elsif !other.ascii_only?
+        raise Encoding::CompatibilityError,
+              "incompatible character encodings: #{encoding.name} and #{other.encoding.name}"
+      end
     end
 
     Rubinius::Type.infect(self, other)

@@ -61,6 +61,7 @@ rb_encoding* rb_enc_get(VALUE obj);
 rb_encoding* rb_enc_compatible(VALUE str1, VALUE str2);
 rb_encoding* rb_enc_from_index(int idx);
 rb_encoding* rb_default_internal_encoding(void);
+rb_encoding* rb_default_external_encoding(void);
 rb_encoding* rb_to_encoding(VALUE obj);
 
 VALUE rb_enc_from_encoding(rb_encoding *enc);
@@ -78,6 +79,7 @@ VALUE rb_enc_str_new(const char*, long, rb_encoding*);
 VALUE rb_usascii_str_new_cstr(const char* ptr);
 int rb_enc_str_coderange(VALUE);
 
+VALUE rb_external_str_new_with_enc(const char *ptr, long len, rb_encoding *);
 VALUE rb_str_export_to_enc(VALUE, rb_encoding *);
 VALUE rb_str_conv_enc(VALUE str, rb_encoding *from, rb_encoding *to);
 

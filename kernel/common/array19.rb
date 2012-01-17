@@ -286,68 +286,46 @@ class Array
     return "" if @total == 0
 
     out = ""
-    return "[...]" if Thread.detect_recursion self do
+    raise ArgumentError, "recursive array join" if Thread.detect_recursion self do
       sep = sep ? StringValue(sep) : $,
-      out.taint if sep.tainted? || tainted?
-      out.untrust if sep.untrusted? || untrusted?
 
       # We've manually unwound the first loop entry for performance
       # reasons.
       x = @tuple[@start]
 
-      if x == self
-        raise ArgumentError, "recursive array join"
-      end
-
-      case x
-      when String
-        out.append x
-      when Array
-        out.append x.join(sep)
+      if str = String.try_convert(x)
+        x = str
+      elsif ary = Array.try_convert(x)
+        x = ary.join(sep)
       else
-        begin
-          out.append x.to_str
-        rescue NoMethodError
-          out.append x.to_s
-        end
+        x = x.to_s
       end
 
-      out.taint if x.tainted?
-      out.untrust if x.untrusted?
+      out.force_encoding(x.encoding)
+      out << x
 
       total = @start + size()
       i = @start + 1
 
       while i < total
-        out.append sep
+        out << sep
 
         x = @tuple[i]
 
-        if x == self
-          raise ArgumentError, "recursive array join"
-        end
-
-        case x
-        when String
-          out.append x
-        when Array
-          out.append x.join(sep)
+        if str = String.try_convert(x)
+          x = str
+        elsif ary = Array.try_convert(x)
+          x = ary.join(sep)
         else
-          begin
-            out.append x.to_str
-          rescue NoMethodError
-            out.append x.to_s
-          end
+          x = x.to_s
         end
 
-        out.taint if x.tainted?
-        out.untrust if x.untrusted?
-
+        out << x
         i += 1
       end
     end
 
-    out
+    Rubinius::Type.infect(out, self)
   end
 
   def keep_if(&block)

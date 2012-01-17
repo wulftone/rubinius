@@ -17,14 +17,6 @@ class String
     to_inum(16, false)
   end
 
-  def initialize(arg = undefined)
-    replace StringValue(arg) unless arg.equal?(undefined)
-
-    self
-  end
-
-  private :initialize
-
   def upto(stop, exclusive=false)
     stop = StringValue(stop)
     return self if self > stop
@@ -536,9 +528,7 @@ class String
     self.num_bytes = other.num_bytes
     @hash_value = nil
 
-    taint if other.tainted?
-
-    self
+    Rubinius::Type.infect(self, other)
   end
   alias_method :initialize_copy, :replace
   # private :initialize_copy

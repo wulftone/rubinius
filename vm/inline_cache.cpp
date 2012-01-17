@@ -242,6 +242,13 @@ namespace rubinius {
       fill_public(state, call_frame->self(), name, recv_class, mce);
     if(reason != eNone) return 0;
 
+    // Make sure we sync here, so the MethodCacheEntry mce is
+    // guaranteed completely initialized. Otherwise another thread
+    // might see an incompletely initialized MethodCacheEntry.
+    atomic::memory_barrier();
+
+    cache_ = mce;
+
     update_seen_classes(mce);
     call_frame->cm->write_barrier(state, mce);
 
@@ -256,6 +263,13 @@ namespace rubinius {
     if(likely(mce && mce->receiver_class() == recv_class)) return mce;
 
     if(!fill_private(state, name, recv_class, recv_class, mce)) return 0;
+
+    // Make sure we sync here, so the MethodCacheEntry mce is
+    // guaranteed completely initialized. Otherwise another thread
+    // might see an incompletely initialized MethodCacheEntry.
+    atomic::memory_barrier();
+
+    cache_ = mce;
 
     update_seen_classes(mce);
     call_frame->cm->write_barrier(state, mce);
@@ -279,7 +293,7 @@ namespace rubinius {
     }
 
     Object* ret = G(rubinius)->send(state, call_frame, state->symbol("bind_call"),
-                                    ary, Qnil, true);
+                                    ary, cNil, true);
 
     if(!ret) return 0;
 
@@ -708,29 +722,20 @@ namespace rubinius {
   void InlineCacheRegistry::add_cache(STATE, Symbol* sym, InlineCache* cache) {
     SYNC(state);
     // TODO make sure cache isn't already known?
-    caches_[sym->index()].push_back(cache);
+    CacheSet& set = caches_[sym->index()];
+    set.insert(cache);
   }
 
   void InlineCacheRegistry::remove_cache(STATE, Symbol* sym, InlineCache* cache) {
     SYNC(state);
-    CacheVector& vec = caches_[sym->index()];
-    for(CacheVector::iterator i = vec.begin();
-        i != vec.end();
-        ++i) {
-      if(*i == cache) {
-        vec.erase(i);
-        return;
-      }
-    }
+    CacheSet& set = caches_[sym->index()];
+    set.erase(cache);
   }
 
   void InlineCacheRegistry::clear(STATE, Symbol* sym) {
     SYNC(state);
-    CacheVector& vec = caches_[sym->index()];
-
-    for(CacheVector::iterator i = vec.begin();
-        i != vec.end();
-        ++i) {
+    CacheSet& set = caches_[sym->index()];
+    for(CacheSet::iterator i = set.begin(); i != set.end(); ++i) {
       (*i)->clear();
     }
   }
@@ -749,7 +754,7 @@ namespace rubinius {
     for(CacheHash::iterator hi = caches_.begin();
         hi != caches_.end();
         ++hi) {
-      for(CacheVector::iterator vi = hi->second.begin();
+      for(CacheSet::iterator vi = hi->second.begin();
           vi != hi->second.end();
           ++vi) {
         InlineCache* ic = *vi;
@@ -779,7 +784,7 @@ namespace rubinius {
     for(CacheHash::iterator hi = caches_.begin();
         hi != caches_.end();
         ++hi) {
-      for(CacheVector::iterator vi = hi->second.begin();
+      for(CacheSet::iterator vi = hi->second.begin();
           vi != hi->second.end();
           ++vi) {
         InlineCache* ic = *vi;

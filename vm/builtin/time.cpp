@@ -50,7 +50,7 @@ namespace rubinius {
     tm->nanoseconds_ = tv.tv_usec * 1000;
 #endif
 
-    tm->is_gmt(state, Qfalse);
+    tm->is_gmt(state, cFalse);
 
     return tm;
   }
@@ -87,7 +87,7 @@ namespace rubinius {
       tm->nanoseconds_ -= (tm->nanoseconds_ % 1000);
     }
 
-    tm->is_gmt(state, RTEST(gmt) ? Qtrue : Qfalse);
+    tm->is_gmt(state, CBOOL(gmt) ? cTrue : cFalse);
 
     return tm;
   }
@@ -136,7 +136,7 @@ namespace rubinius {
 
     time_t seconds = -1;
 
-    if(RTEST(from_gmt)) {
+    if(CBOOL(from_gmt)) {
       seconds = ::timegm(&tm);
     } else {
       tzset();
@@ -155,7 +155,7 @@ namespace rubinius {
     Time* obj = state->new_object<Time>(as<Class>(self));
     obj->seconds_ = seconds;
     obj->nanoseconds_ = nsec->to_native();
-    obj->is_gmt(state, RTEST(from_gmt) ? Qtrue : Qfalse);
+    obj->is_gmt(state, CBOOL(from_gmt) ? cTrue : cFalse);
 
     return obj;
   }
@@ -174,7 +174,7 @@ namespace rubinius {
     time_t seconds = seconds_;
     struct tm tm = {0};
 
-    if(RTEST(use_gmt)) {
+    if(CBOOL(use_gmt)) {
       gmtime_r(&seconds, &tm);
     } else {
       tzset();
@@ -191,13 +191,13 @@ namespace rubinius {
     ary->set(state, 5, Integer::from(state, tm.tm_year + 1900));
     ary->set(state, 6, Integer::from(state, tm.tm_wday));
     ary->set(state, 7, Integer::from(state, tm.tm_yday + 1));
-    ary->set(state, 8, tm.tm_isdst ? Qtrue : Qfalse);
+    ary->set(state, 8, tm.tm_isdst ? cTrue : cFalse);
 
     const char* tmzone = timezone_extended(&tm);
     if(tmzone) {
       ary->set(state, 9, String::create(state, tmzone));
     } else {
-      ary->set(state, 9, Qnil);
+      ary->set(state, 9, cNil);
     }
 
     // Cache it.
@@ -214,7 +214,7 @@ namespace rubinius {
 
     time_t seconds = seconds_;
 
-    if(RTEST(is_gmt_)) {
+    if(CBOOL(is_gmt_)) {
       is_gmt = 1;
       gmtime_r(&seconds, &tm);
     } else {

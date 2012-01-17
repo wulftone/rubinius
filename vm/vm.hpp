@@ -19,6 +19,8 @@
 
 #include "shared_state.hpp"
 
+#include "fiber_stack.hpp"
+
 #include <vector>
 #include <setjmp.h>
 
@@ -61,6 +63,7 @@ namespace rubinius {
   class SymbolTable;
   class SharedState;
   class Fiber;
+  class GarbageCollector;
 
   enum MethodMissingReason {
     eNone, ePrivate, eProtected, eSuper, eVCall, eNormal
@@ -94,6 +97,7 @@ namespace rubinius {
     rbxti::Env* tooling_env_;
     bool tooling_;
     bool allocation_tracking_;
+    FiberStacks fiber_stacks_;
 
   public:
     /* Data members */
@@ -227,7 +231,7 @@ namespace rubinius {
     }
 
     void clear_interrupted_exception() {
-      interrupted_exception_.set(Qnil);
+      interrupted_exception_.set(cNil);
     }
 
     rbxti::Env* tooling_env() {
@@ -257,6 +261,24 @@ namespace rubinius {
     void disable_allocation_tracking() {
       allocation_tracking_ = false;
     }
+
+    FiberStack* allocate_fiber_stack() {
+      return fiber_stacks_.allocate();
+    }
+
+    void* fiber_trampoline() {
+      return fiber_stacks_.trampoline();
+    }
+
+    FiberData* new_fiber_data() {
+      return fiber_stacks_.new_data();
+    }
+
+    void remove_fiber_data(FiberData* data) {
+      fiber_stacks_.remove_data(data);
+    }
+
+    VariableRootBuffers& current_root_buffers();
 
   public:
     static void init_stack_size();
@@ -374,6 +396,8 @@ namespace rubinius {
 
     void register_raise(STATE, Exception* exc);
 
+    void gc_scan(GarbageCollector* gc);
+
     // For thread-local roots
     static std::list<Roots*>* roots;
   };
@@ -417,16 +441,18 @@ namespace rubinius {
     GCIndependent(STATE, CallFrame* call_frame)
       : state_(state)
     {
+      GCTokenImpl gct;
       state_->set_call_frame(call_frame);
-      state_->gc_independent();
+      state_->gc_independent(gct);
     }
 
     GCIndependent(STATE)
       : state_(state)
     {
-      state_->gc_independent();
+      GCTokenImpl gct;
+      state_->gc_independent(gct);
     }
-    
+
     GCIndependent(NativeMethodEnvironment* env);
 
     ~GCIndependent() {

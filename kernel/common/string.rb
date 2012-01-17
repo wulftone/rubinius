@@ -35,6 +35,13 @@ class String
     alias_method :dup, :clone
   end
 
+  def initialize(arg = undefined)
+    replace StringValue(arg) unless arg.equal?(undefined)
+    self
+  end
+
+  private :initialize
+
   # call-seq:
   #   str % arg   => new_str
   #
@@ -84,9 +91,7 @@ class String
   #
   #   "Hello from " + self.to_s   #=> "Hello from main"
   def +(other)
-    r = "#{self}#{StringValue(other)}"
-    r.taint if tainted? or other.tainted?
-    r
+    String.new(self) << StringValue(other)
   end
 
   # call-seq:

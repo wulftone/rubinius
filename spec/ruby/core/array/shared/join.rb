@@ -20,28 +20,52 @@ describe :array_join_with_default_separator, :shared => true do
     end
   end
 
+  it "returns a string formed by concatenating each String element separated by $," do
+    $, = " | "
+    ["1", "2", "3"].send(@method).should == "1 | 2 | 3"
+  end
+
   ruby_version_is ""..."1.9" do
-    it "returns a string formed by concatenating each element.to_s separated by $," do
-      $, = " | "
+    it "coerces non-String elements via #to_s" do
       obj = mock('foo')
       obj.should_receive(:to_s).and_return("foo")
-      [1, 2, 3, 4, obj].send(@method).should == '1 | 2 | 3 | 4 | foo'
+      [obj].send(@method).should == "foo"
+    end
+
+    it "raises a NoMethodError if an element does not respond to #to_s" do
+      obj = mock('o')
+      class << obj; undef :to_s; end
+      lambda { [obj].send(@method) }.should raise_error(NoMethodError)
     end
   end
 
   ruby_version_is "1.9" do
-    it "returns a string formed by concatenating each element.to_str separated by $," do
-      $, = " | "
+    it "attempts coercion via #to_str first" do
       obj = mock('foo')
-      obj.should_receive(:to_str).and_return("foo")
-      [1, 2, 3, 4, obj].send(@method).should == '1 | 2 | 3 | 4 | foo'
+      obj.should_receive(:to_str).any_number_of_times.and_return("foo")
+      [obj].send(@method).should == "foo"
     end
-  end
 
-  it "raises a NoMethodError if an element does not respond to #to_s" do
-    obj = mock('o')
-    class << obj; undef :to_s; end
-    lambda { [1, obj].send(@method) }.should raise_error(NoMethodError)
+    it "attempts coercion via #to_ary second" do
+      obj = mock('foo')
+      obj.should_receive(:to_str).any_number_of_times.and_return(nil)
+      obj.should_receive(:to_ary).any_number_of_times.and_return(["foo"])
+      [obj].send(@method).should == "foo"
+    end
+
+    it "attempts coercion via #to_s third" do
+      obj = mock('foo')
+      obj.should_receive(:to_str).any_number_of_times.and_return(nil)
+      obj.should_receive(:to_ary).any_number_of_times.and_return(nil)
+      obj.should_receive(:to_s).any_number_of_times.and_return("foo")
+      [obj].send(@method).should == "foo"
+    end
+
+    it "raises a NoMethodError if an element does not respond to #to_str, #to_ary, or #to_s" do
+      obj = mock('o')
+      class << obj; undef :to_s; end
+      lambda { [1, obj].send(@method) }.should raise_error(NoMethodError)
+    end
   end
 
   ruby_version_is "".."1.9" do
@@ -70,8 +94,10 @@ describe :array_join_with_default_separator, :shared => true do
     [].taint.send(@method).tainted?.should be_false
   end
 
-  it "taints the result if an element is tainted" do
-    ["str".taint].send(@method).tainted?.should be_true
+  it "taints the result if the result of coercing an element is tainted" do
+    s = mock("taint")
+    s.should_receive(:to_s).and_return("str".taint)
+    [s].send(@method).tainted?.should be_true
   end
 
   ruby_version_is "1.9" do
@@ -83,8 +109,10 @@ describe :array_join_with_default_separator, :shared => true do
       [].untrust.send(@method).untrusted?.should be_false
     end
 
-    it "untrusts the result if an element is untrusted" do
-      ["str".untrust].send(@method).untrusted?.should be_true
+    it "untrusts the result if the result of coercing an element is untrusted" do
+      s = mock("untrust")
+      s.should_receive(:to_s).and_return("str".untrust)
+      [s].send(@method).untrusted?.should be_true
     end
   end
 
@@ -139,21 +167,45 @@ describe :array_join_with_string_separator, :shared => true do
     [1, [2, ArraySpecs::MyArray[3, 4], 5], 6].send(@method, ":").should == "1:2:3:4:5:6"
   end
 
-  it "taints the result if the separator is tainted and the array is non-empty" do
-    [1, 2].send(@method, ":".taint).tainted?.should be_true
-  end
-
-  it "does not taint the result if the separator is tainted but the array is empty" do
-    [].send(@method, ":".taint).tainted?.should be_false
-  end
-
-  ruby_version_is '1.9' do
-    it "untrusts the result if the separator is untrusted and the array is non-empty" do
-      [1, 2].send(@method, ":".untrust).untrusted?.should be_true
+  describe "with a tainted separator" do
+    before :each do
+      @sep = ":".taint
     end
 
-    it "does not untrust the result if the separator is untrusted but the array is empty" do
-      [].send(@method, ":".untrust).untrusted?.should be_false
+    it "does not taint the result if the array is empty" do
+      [].send(@method, @sep).tainted?.should be_false
+    end
+
+    ruby_bug "5902", "2.0" do
+      it "does not taint the result if the array has only one element" do
+        [1].send(@method, @sep).tainted?.should be_false
+      end
+    end
+
+    it "taints the result if the array has two or more elements" do
+      [1, 2].send(@method, @sep).tainted?.should be_true
+    end
+  end
+
+  ruby_version_is "1.9" do
+    describe "with an untrusted separator" do
+      before :each do
+        @sep = ":".untrust
+      end
+
+      it "does not untrust the result if the array is empty" do
+        [].send(@method, @sep).untrusted?.should be_false
+      end
+
+      ruby_bug "5902", "2.0" do
+        it "does not untrust the result if the array has only one element" do
+          [1].send(@method, @sep).untrusted?.should be_false
+        end
+      end
+
+      it "untrusts the result if the array has two or more elements" do
+        [1, 2].send(@method, @sep).untrusted?.should be_true
+      end
     end
   end
 end

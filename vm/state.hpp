@@ -106,7 +106,7 @@ namespace rubinius {
       shared_.restart_world(vm_);
     }
 
-    void gc_independent() {
+    void gc_independent(GCToken gct) {
       shared_.gc_independent(vm_);
     }
 
@@ -126,8 +126,10 @@ namespace rubinius {
       }
     }
 
-    void lock() {
+    void lock(GCToken gct) {
+      gc_independent(gct);
       vm_->lock(vm_);
+      gc_dependent();
     }
 
     void unlock() {

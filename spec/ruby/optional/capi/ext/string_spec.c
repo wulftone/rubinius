@@ -3,6 +3,10 @@
 #include "ruby.h"
 #include "rubyspec.h"
 
+#ifdef HAVE_RUBY_ENCODING_H
+#include "ruby/encoding.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,6 +15,13 @@ extern "C" {
 VALUE string_spec_rb_cstr2inum(VALUE self, VALUE str, VALUE inum) {
   int num = FIX2INT(inum);
   return rb_cstr2inum(RSTRING_PTR(str), num);
+}
+#endif
+
+#ifdef HAVE_RB_CSTR_TO_INUM
+static VALUE string_spec_rb_cstr_to_inum(VALUE self, VALUE str, VALUE inum, VALUE badcheck) {
+  int num = FIX2INT(inum);
+  return rb_cstr_to_inum(RSTRING_PTR(str), num, RTEST(badcheck));
 }
 #endif
 
@@ -155,6 +166,24 @@ VALUE string_spec_rb_str_new_cstr(VALUE self, VALUE str) {
   } else {
     return rb_str_new_cstr(RSTRING_PTR(str));
   }
+}
+#endif
+
+#ifdef HAVE_RB_EXTERNAL_STR_NEW
+VALUE string_spec_rb_external_str_new(VALUE self, VALUE str) {
+  return rb_external_str_new(RSTRING_PTR(str), RSTRING_LEN(str));
+}
+#endif
+
+#ifdef HAVE_RB_EXTERNAL_STR_NEW_CSTR
+VALUE string_spec_rb_external_str_new_cstr(VALUE self, VALUE str) {
+  return rb_external_str_new_cstr(RSTRING_PTR(str));
+}
+#endif
+
+#ifdef HAVE_RB_EXTERNAL_STR_NEW_WITH_ENC
+VALUE string_spec_rb_external_str_new_with_enc(VALUE self, VALUE str, VALUE len, VALUE encoding) {
+  return rb_external_str_new_with_enc(RSTRING_PTR(str), FIX2LONG(len), rb_to_encoding(encoding));
 }
 #endif
 
@@ -424,6 +453,10 @@ void Init_string_spec() {
   rb_define_method(cls, "rb_cstr2inum", string_spec_rb_cstr2inum, 2);
 #endif
 
+#ifdef HAVE_RB_CSTR_TO_INUM
+  rb_define_method(cls, "rb_cstr_to_inum", string_spec_rb_cstr_to_inum, 3);
+#endif
+
 #ifdef HAVE_RB_STR2CSTR
   rb_define_method(cls, "rb_str2cstr", string_spec_rb_str2cstr, 2);
   rb_define_method(cls, "rb_str2cstr_replace", string_spec_rb_str2cstr_replace, 1);
@@ -490,6 +523,19 @@ void Init_string_spec() {
 
 #ifdef HAVE_RB_STR_NEW_CSTR
   rb_define_method(cls, "rb_str_new_cstr", string_spec_rb_str_new_cstr, 1);
+#endif
+
+#ifdef HAVE_RB_EXTERNAL_STR_NEW
+  rb_define_method(cls, "rb_external_str_new", string_spec_rb_external_str_new, 1);
+#endif
+
+#ifdef HAVE_RB_EXTERNAL_STR_NEW_CSTR
+  rb_define_method(cls, "rb_external_str_new_cstr",
+                   string_spec_rb_external_str_new_cstr, 1);
+#endif
+
+#ifdef HAVE_RB_EXTERNAL_STR_NEW_WITH_ENC
+  rb_define_method(cls, "rb_external_str_new_with_enc", string_spec_rb_external_str_new_with_enc, 3);
 #endif
 
 #ifdef HAVE_RB_STR_NEW3

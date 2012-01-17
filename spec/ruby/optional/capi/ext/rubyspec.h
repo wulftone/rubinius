@@ -163,6 +163,7 @@
 #define HAVE_RB_FILESYSTEM_ENCINDEX        1
 
 #define HAVE_RB_DEFAULT_INTERNAL_ENCODING  1
+#define HAVE_RB_DEFAULT_EXTERNAL_ENCODING  1
 
 #define HAVE_RB_ENCDB_ALIAS                1
 #define HAVE_RB_ENC_ASSOCIATE              1
@@ -178,6 +179,9 @@
 #define HAVE_RB_ENC_TO_INDEX               1
 
 #define HAVE_RB_USASCII_STR_NEW_CSTR       1
+#define HAVE_RB_EXTERNAL_STR_NEW           1
+#define HAVE_RB_EXTERNAL_STR_NEW_CSTR      1
+#define HAVE_RB_EXTERNAL_STR_NEW_WITH_ENC  1
 
 #define HAVE_RB_TO_ENCODING                1
 #define HAVE_RB_TO_ENCODING_INDEX          1
@@ -373,6 +377,7 @@
 
 /* String */
 #define HAVE_RB_CSTR2INUM                  1
+#define HAVE_RB_CSTR_TO_INUM               1
 #define HAVE_RB_STR2CSTR                   1
 #define HAVE_RB_STR2INUM                   1
 #define HAVE_RB_STR_APPEND                 1

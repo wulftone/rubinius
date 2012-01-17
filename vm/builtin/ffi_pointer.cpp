@@ -166,7 +166,7 @@ namespace rubinius {
   }
 
   Integer* Pointer::read_char(STATE, Object* sign) {
-    if(RTEST(sign)) {
+    if(CBOOL(sign)) {
       return Integer::from(state, *(char*)pointer);
     } else {
       return Integer::from(state, *(unsigned char*)pointer);
@@ -180,7 +180,7 @@ namespace rubinius {
   }
 
   Integer* Pointer::read_short(STATE, Object* sign) {
-    if(RTEST(sign)) {
+    if(CBOOL(sign)) {
       return Integer::from(state, *(short*)pointer);
     } else {
       return Integer::from(state, *(unsigned short*)pointer);
@@ -193,7 +193,7 @@ namespace rubinius {
   }
 
   Integer* Pointer::read_int(STATE, Object* sign) {
-    if(RTEST(sign)) {
+    if(CBOOL(sign)) {
       return Integer::from(state, *(int*)pointer);
     } else {
       return Integer::from(state, *(unsigned int*)pointer);
@@ -206,7 +206,7 @@ namespace rubinius {
   }
 
   Integer* Pointer::read_long(STATE, Object* sign) {
-    if(RTEST(sign)) {
+    if(CBOOL(sign)) {
       return Integer::from(state, *(long*)pointer);
     } else {
       return Integer::from(state, *(unsigned long*)pointer);
@@ -219,7 +219,7 @@ namespace rubinius {
   }
 
   Integer* Pointer::read_long_long(STATE, Object* sign) {
-    if(RTEST(sign)) {
+    if(CBOOL(sign)) {
       return Integer::from(state, *(long long*)pointer);
     } else {
       return Integer::from(state, *(unsigned long long*)pointer);
@@ -292,7 +292,7 @@ namespace rubinius {
       ret = Fixnum::from((unsigned int)(READ(unsigned char)));
       break;
     case RBX_FFI_TYPE_BOOL:
-      ret = (READ(unsigned char)) ? Qtrue : Qfalse;
+      ret = (READ(unsigned char)) ? cTrue : cFalse;
       break;
     case RBX_FFI_TYPE_SHORT:
       ret = Fixnum::from((int)(READ(short)));
@@ -330,7 +330,7 @@ namespace rubinius {
     case RBX_FFI_TYPE_PTR: {
       void *lptr = READ(void*);
       if(!lptr) {
-        ret = Qnil;
+        ret = cNil;
       } else {
         ret = Pointer::create(state, lptr);
       }
@@ -339,7 +339,7 @@ namespace rubinius {
     case RBX_FFI_TYPE_STRING: {
       char* result = READ(char*);
       if(result == NULL) {
-        ret = Qnil;
+        ret = cNil;
       } else {
         ret = String::create(state, result);
       }
@@ -353,7 +353,7 @@ namespace rubinius {
       result = READ(char*);
 
       if(result == NULL) {
-        s = p = Qnil;
+        s = p = cNil;
       } else {
         s = String::create(state, result);
         p = Pointer::create(state, result);
@@ -367,7 +367,7 @@ namespace rubinius {
     }
     default:
     case RBX_FFI_TYPE_VOID:
-      ret = Qnil;
+      ret = cNil;
       break;
     }
 
@@ -396,7 +396,7 @@ namespace rubinius {
       WRITE(unsigned char, as<Fixnum>(val)->to_native());
       break;
     case RBX_FFI_TYPE_BOOL:
-      WRITE(unsigned char, RTEST(val) ? 1 : 0);
+      WRITE(unsigned char, CBOOL(val) ? 1 : 0);
       break;
     case RBX_FFI_TYPE_SHORT:
       type_assert(state, val, FixnumType, "converting to short");
@@ -407,7 +407,7 @@ namespace rubinius {
       WRITE(unsigned short, as<Fixnum>(val)->to_native());
       break;
     case RBX_FFI_TYPE_INT:
-      if(FIXNUM_P(val)) {
+      if(val->fixnum_p()) {
         WRITE(int, as<Fixnum>(val)->to_int());
       } else {
         type_assert(state, val, BignumType, "converting to int");
@@ -415,7 +415,7 @@ namespace rubinius {
       }
       break;
     case RBX_FFI_TYPE_UINT:
-      if(FIXNUM_P(val)) {
+      if(val->fixnum_p()) {
         WRITE(unsigned int, as<Fixnum>(val)->to_uint());
       } else {
         type_assert(state, val, BignumType, "converting to unsigned int");
@@ -423,7 +423,7 @@ namespace rubinius {
       }
       break;
     case RBX_FFI_TYPE_LONG:
-      if(FIXNUM_P(val)) {
+      if(val->fixnum_p()) {
         WRITE(long, as<Fixnum>(val)->to_long());
       } else {
         type_assert(state, val, BignumType, "converting to long");
@@ -431,7 +431,7 @@ namespace rubinius {
       }
       break;
     case RBX_FFI_TYPE_ULONG:
-      if(FIXNUM_P(val)) {
+      if(val->fixnum_p()) {
         WRITE(unsigned long, as<Fixnum>(val)->to_ulong());
       } else {
         type_assert(state, val, BignumType, "converting to unsigned long");
@@ -451,7 +451,7 @@ namespace rubinius {
       break;
     }
     case RBX_FFI_TYPE_LONG_LONG:
-      if(FIXNUM_P(val)) {
+      if(val->fixnum_p()) {
         WRITE(long long, as<Fixnum>(val)->to_long_long());
       } else {
         type_assert(state, val, BignumType, "converting to long long");
@@ -459,7 +459,7 @@ namespace rubinius {
       }
       break;
     case RBX_FFI_TYPE_ULONG_LONG:
-      if(FIXNUM_P(val)) {
+      if(val->fixnum_p()) {
         WRITE(unsigned long long, as<Fixnum>(val)->to_ulong_long());
       } else {
         type_assert(state, val, BignumType, "converting to unsigned long long");
@@ -470,7 +470,7 @@ namespace rubinius {
       WRITE(Object*, val);
       break;
     case RBX_FFI_TYPE_PTR:
-      if(NIL_P(val)) {
+      if(val->nil_p()) {
         WRITE(void*, NULL);
       } else {
         Pointer *mp = as<Pointer>(val);
@@ -480,7 +480,7 @@ namespace rubinius {
       break;
     case RBX_FFI_TYPE_STRING: {
       const char* result;
-      if(NIL_P(val)) {
+      if(val->nil_p()) {
         result = NULL;
       } else {
         String* str = as<String>(val);
