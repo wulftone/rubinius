@@ -18,6 +18,8 @@
 #include "call_frame.hpp"
 #include "arguments.hpp"
 
+#include "configuration.hpp"
+
 #include "gc/gc.hpp"
 
 #include "util/atomic.hpp"
@@ -83,6 +85,33 @@ namespace rubinius {
     return r;
   }
 
+  static int encoding_to_kcode(STATE, Encoding* enc) {
+    // TODO: Remove 1.8 kcode/options and add flags struct
+    if(enc == Encoding::usascii_encoding(state)) return KCODE_NONE;
+    if(enc == Encoding::utf8_encoding(state)) return KCODE_UTF8;
+    if(enc == Encoding::find(state, "EUC-JP")) return KCODE_EUC;
+    if(enc == Encoding::find(state, "Windows-31J")) return KCODE_SJIS;
+
+    return KCODE_NONE;
+  }
+
+  static Encoding* kcode_to_encoding(STATE, int kcode, Encoding* enc) {
+    switch(kcode & KCODE_MASK) {
+    case KCODE_NONE:
+      return 0;
+    case KCODE_EUC:
+      return Encoding::find(state, "EUC-JP");
+    case KCODE_SJIS:
+      return Encoding::find(state, "Windows-31J");
+    case KCODE_UTF8:
+      return Encoding::utf8_encoding(state);
+    case KCODE_ASCII:
+    default:
+      return enc;
+      break;
+    }
+  }
+
   static OnigEncoding current_encoding(STATE) {
     switch(state->shared().kcode_page()) {
     default:
@@ -134,7 +163,7 @@ namespace rubinius {
     Regexp* o_reg = state->new_object<Regexp>(G(regexp));
 
     o_reg->onig_data = NULL;
-    o_reg->forced_encoding_ = false;
+    o_reg->fixed_encoding_ = false;
     o_reg->lock_.init();
 
     return o_reg;
@@ -216,7 +245,7 @@ namespace rubinius {
     OnigErrorInfo err_info;
     int err;
 
-    if(forced_encoding_) return;
+    if(fixed_encoding_) return;
 
     enc = current_encoding(state);
     if(enc == onig_data->enc) return;
@@ -245,7 +274,7 @@ namespace rubinius {
         assert(err == ONIG_NORMAL);
       }
 
-      forced_encoding_ = true;
+      fixed_encoding_ = true;
     }
 
     make_managed(state);
@@ -262,20 +291,34 @@ namespace rubinius {
     OnigEncoding enc;
     int err, num_names, kcode;
 
-    pat = (UChar*)pattern->byte_address();
-    end = pat + pattern->byte_size();
-
     opts  = options->to_native();
     kcode = opts & KCODE_MASK;
     opts &= OPTION_MASK;
 
-    if(kcode == 0) {
-      enc = current_encoding(state);
+    if(LANGUAGE_18_ENABLED(state)) {
+      pat = (UChar*)pattern->byte_address();
+      end = pat + pattern->byte_size();
+
+      if(kcode == 0) {
+          enc = current_encoding(state);
+      } else {
+        // Don't attempt to fix the encoding later, it's been specified by the
+        // user.
+        enc = get_enc_from_kcode(kcode);
+        fixed_encoding_ = true;
+      }
     } else {
-      // Don't attempt to fix the encoding later, it's been specified by the
-      // user.
-      enc = get_enc_from_kcode(kcode);
-      forced_encoding_ = true;
+      Encoding* source_enc = kcode_to_encoding(state, kcode, pattern->encoding(state));
+
+      fixed_encoding_ = kcode && kcode != KCODE_NONE;
+      String* converted = pattern->convert_escaped(state, source_enc, fixed_encoding_);
+
+      pat = (UChar*)converted->byte_address();
+      end = pat + converted->byte_size();
+      enc = source_enc->get_encoding();
+
+      pattern = pattern->string_dup(state);
+      pattern->encoding(state, source_enc);
     }
 
     thread::Mutex::LockGuard lg(state->shared().onig_lock());
@@ -327,11 +370,20 @@ namespace rubinius {
 
     int result = ((int)onig_get_options(onig_data) & OPTION_MASK);
 
-    if(forced_encoding_) {
-      result |= get_kcode_from_enc(onig_get_encoding(onig_data));
+    if(fixed_encoding_) {
+      // TODO: unify after removing 1.8 kcode
+      if(LANGUAGE_18_ENABLED(state)) {
+        result |= get_kcode_from_enc(onig_get_encoding(onig_data));
+      } else {
+        result |= encoding_to_kcode(state, encoding(state));
+      }
     }
 
     return Fixnum::from(result);
+  }
+
+  Object* Regexp::fixed_encoding_p(STATE) {
+    return RBOOL(fixed_encoding_);
   }
 
   static Tuple* _md_region_to_tuple(STATE, OnigRegion *region, int pos) {
@@ -393,8 +445,6 @@ namespace rubinius {
     if(unlikely(!onig_data)) {
       Exception::argument_error(state, "Not properly initialized Regexp");
     }
-
-    // thread::Mutex::LockGuard lg(state->shared().onig_lock());
 
     max = string->byte_size();
     str = (UChar*)string->byte_address();

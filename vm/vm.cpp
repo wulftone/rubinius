@@ -83,8 +83,6 @@ namespace rubinius {
     , current_fiber(this, nil<Fiber>())
     , root_fiber(this, nil<Fiber>())
   {
-    set_stack_size(cStackDepthMax);
-
     if(shared.om) {
       young_start_ = shared.om->young_start();
       young_end_ = shared.om->yound_end();
@@ -280,12 +278,6 @@ namespace rubinius {
     shared.gc_soon();
   }
 
-  void VM::collect(GCToken gct, CallFrame* call_frame) {
-    State state(this);
-    this->set_call_frame(call_frame);
-    om->collect(&state, gct, call_frame);
-  }
-
   void VM::collect_maybe(GCToken gct, CallFrame* call_frame) {
     State state(this);
     this->set_call_frame(call_frame);
@@ -423,8 +415,7 @@ namespace rubinius {
   }
 
   void VM::set_current_fiber(Fiber* fib) {
-    set_stack_start(fib->stack());
-    set_stack_size(fib->stack_size());
+    set_stack_bounds((uintptr_t)fib->stack_start(), fib->stack_size());
     current_fiber.set(fib);
   }
 

@@ -170,6 +170,17 @@ class IO
       if mode.kind_of? Hash
         options = mode
         mode = options[:mode]
+      elsif mode.kind_of?(String) && options.kind_of?(Hash)
+        raise ArgumentError, "mode specified twice" if options[:mode]
+
+        if (mode[1] === ?b && options[:textmode]) ||
+           (mode[1] === ?t && options[:binmode])
+          raise ArgumentError, "both textmode and binmode specified"
+        end
+      end
+
+      if options.kind_of?(Hash) && options[:textmode] && options[:binmode]
+        raise ArgumentError, "both textmode and binmode specified"
       end
     end
 
@@ -474,6 +485,21 @@ class IO
 
   def internal_encoding
     @internal
+  end
+
+  def binmode
+    ensure_open
+
+    @binmode = true
+    @external = Encoding::BINARY
+    @internal = nil
+
+    # HACK what to do?
+    self
+  end
+
+  def binmode?
+    !@binmode.nil?
   end
 
   ##

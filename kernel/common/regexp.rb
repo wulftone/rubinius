@@ -79,7 +79,7 @@ class Regexp
   def initialize(pattern, opts=nil, lang=nil)
     if pattern.kind_of?(Regexp)
       opts = pattern.options
-      pattern  = pattern.source
+      pattern = pattern.source
     elsif opts.kind_of?(Fixnum)
       opts = opts & (OPTION_MASK | KCODE_MASK) if opts > 0
     elsif opts
@@ -88,7 +88,7 @@ class Regexp
       opts = 0
     end
 
-    if opts and lang and lang.kind_of?(String)
+    if opts and lang.kind_of?(String)
       opts &= OPTION_MASK
       idx   = ValidKcode.index(lang.downcase[0])
       opts |= KcodeValue[idx] if idx
@@ -97,13 +97,8 @@ class Regexp
     compile pattern, opts
   end
 
-  def self.escape(str)
-    StringValue(str).transform(ESCAPE_TABLE, true)
-  end
-
   class << self
     alias_method :compile, :new
-    alias_method :quote, :escape
   end
 
   def initialize_copy(other)

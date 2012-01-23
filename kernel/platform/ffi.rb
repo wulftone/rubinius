@@ -77,6 +77,10 @@ module FFI
       vals
     end
 
+    def errno
+      FFI::Platform::POSIX.errno
+    end
+
   end
 
   # Converts a Rubinius Object
@@ -209,4 +213,8 @@ module FFI::Platform
   else
     LIBSUFFIX = "so"
   end
+
+  # ruby-ffi compatible
+  LONG_SIZE = Rubinius::SIZEOF_LONG * 8
+  ADDRESS_SIZE = Rubinius::WORDSIZE
 end

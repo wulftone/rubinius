@@ -117,6 +117,18 @@ describe :io_new, :shared => true do
       @io.internal_encoding.to_s.should == ''
     end
 
+    it "raises an error if passed encodings two ways" do
+      lambda {
+        @io = IO.send(@method, @fd, 'w:ISO-8859-1', {:encoding => 'ISO-8859-1'})
+      }.should raise_error(ArgumentError)
+      lambda {
+        @io = IO.send(@method, @fd, 'w:ISO-8859-1', {:external_encoding => 'ISO-8859-1'})
+      }.should raise_error(ArgumentError)
+      lambda {
+        @io = IO.send(@method, @fd, 'w:ISO-8859-1:UTF-8', {:internal_encoding => 'ISO-8859-1'})
+      }.should raise_error(ArgumentError)
+    end
+
     it "sets binmode from mode string" do
       @io = IO.send(@method, @fd, 'wb')
       @io.binmode?.should == true
@@ -135,6 +147,18 @@ describe :io_new, :shared => true do
     it "does not set binmode from false :binmode" do
       @io = IO.send(@method, @fd, 'w', {:binmode => false})
       @io.binmode?.should == false
+    end
+
+    it "sets external encoding to binary with binmode in mode string" do
+      @io = IO.send(@method, @fd, 'wb')
+      @io.external_encoding.to_s.should == 'ASCII-8BIT'
+    end
+
+    ruby_bug "#5917", "2.0" do
+      it "sets external encoding to binary with :binmode option" do
+        @io = IO.send(@method, @fd, 'w', {:binmode => true})
+        @io.external_encoding.to_s.should == 'ASCII-8BIT'
+      end
     end
   end
 

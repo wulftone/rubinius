@@ -109,7 +109,7 @@ namespace rubinius {
   }
 
   Integer* Pointer::get_address(STATE) {
-    return Integer::from(state, (intptr_t)pointer);
+    return Integer::from(state, (uintptr_t)pointer);
   }
 
   Integer* Pointer::set_address(STATE, Integer* ptr) {
@@ -242,6 +242,11 @@ namespace rubinius {
 
   Float* Pointer::read_double(STATE) {
     return Float::create(state, *(double*)pointer);
+  }
+
+  Pointer* Pointer::write_pointer(STATE, Pointer* ptr) {
+    *(void**)pointer = ptr->pointer;
+    return ptr;
   }
 
   Pointer* Pointer::read_pointer(STATE) {
