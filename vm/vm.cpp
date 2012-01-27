@@ -35,6 +35,8 @@
 
 #include "util/thread.hpp"
 
+#include "park.hpp"
+
 #include <iostream>
 #include <iomanip>
 #include <signal.h>
@@ -68,10 +70,11 @@ namespace rubinius {
     , run_signals_(false)
     , thread_step_(false)
     , fiber_stacks_(this, shared)
+    , park_(new Park)
 
     , shared(shared)
-    , waiting_channel_(this, (Channel*)cNil)
-    , interrupted_exception_(this, (Exception*)cNil)
+    , waiting_channel_(this, nil<Channel>())
+    , interrupted_exception_(this, nil<Exception>())
     , interrupt_with_signal_(false)
     , waiting_header_(0)
     , custom_wakeup_(0)
@@ -93,6 +96,10 @@ namespace rubinius {
     tooling_ = false;
 
     allocation_tracking_ = shared.config.allocation_tracking;
+  }
+
+  VM::~VM() {
+    delete park_;
   }
 
   void VM::discard(STATE, VM* vm) {
@@ -339,7 +346,10 @@ namespace rubinius {
     // Wakeup any locks hanging around with contention
     om->release_contention(state, gct);
 
-    if(interrupt_with_signal_) {
+    if(park_->parked_p()) {
+      park_->unpark();
+      return true;
+    } else if(interrupt_with_signal_) {
 #ifdef RBX_WINDOWS
       // TODO: wake up the thread
 #else
@@ -372,7 +382,7 @@ namespace rubinius {
   void VM::clear_waiter() {
     SYNC_TL;
     interrupt_with_signal_ = false;
-    waiting_channel_.set((Channel*)cNil);
+    waiting_channel_.set(nil<Channel>());
     waiting_header_ = 0;
     custom_wakeup_ = 0;
     custom_wakeup_data_ = 0;
@@ -396,7 +406,7 @@ namespace rubinius {
   }
 
   bool VM::waiting_p() {
-    return interrupt_with_signal_ || !waiting_channel_->nil_p();
+    return park_->parked_p() || interrupt_with_signal_ || !waiting_channel_->nil_p();
   }
 
   void VM::set_sleeping() {

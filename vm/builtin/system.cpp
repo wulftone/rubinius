@@ -50,6 +50,8 @@
 #include "builtin/io.hpp"
 #include "builtin/thread.hpp"
 
+#include "builtin/channel.hpp"
+
 #include "builtin/staticscope.hpp"
 #include "builtin/block_environment.hpp"
 
@@ -678,6 +680,45 @@ namespace rubinius {
 
   Object* System::vm_time(STATE) {
     return Integer::from(state, time(0));
+  }
+
+#define NANOSECONDS 1000000000
+  Object* System::vm_sleep(STATE, GCToken gct, Object* duration,
+                           CallFrame* calling_environment)
+  {
+    struct timespec ts = {0,0};
+    bool use_timed_wait = true;
+
+    if(Fixnum* fix = try_as<Fixnum>(duration)) {
+      ts.tv_sec = fix->to_native();
+    } else if(Float* flt = try_as<Float>(duration)) {
+      uint64_t nano = (uint64_t)(flt->val * NANOSECONDS);
+      ts.tv_sec  =  (time_t)(nano / NANOSECONDS);
+      ts.tv_nsec =    (long)(nano % NANOSECONDS);
+    } else if(duration == G(undefined)) {
+      use_timed_wait = false;
+    } else {
+      return Primitives::failure();
+    }
+
+    time_t start = time(0);
+
+    if(use_timed_wait) {
+      struct timeval tv = {0,0};
+      gettimeofday(&tv, 0);
+
+      uint64_t nano = ts.tv_nsec + tv.tv_usec * 1000;
+      ts.tv_sec  += tv.tv_sec + nano / NANOSECONDS;
+      ts.tv_nsec  = nano % NANOSECONDS;
+
+      state->park_timed(gct, calling_environment, &ts);
+    } else {
+      state->park(gct, calling_environment);
+    }
+
+    if(!state->check_async(calling_environment)) return NULL;
+
+    return Fixnum::from(time(0) - start);
   }
 
   static inline double tv_to_dbl(struct timeval* tv) {
