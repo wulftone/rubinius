@@ -164,6 +164,7 @@ namespace rubinius {
     nf->file(state, state->symbol("<system>"));
 
     nf->set_executor(NativeFunction::execute);
+    nf->inliners_ = 0;
     nf->ffi_data = 0;
 
     return nf;
@@ -1069,6 +1070,7 @@ namespace rubinius {
 
   void NativeFunction::Info::mark(Object* obj, ObjectMark& mark) {
     auto_mark(obj, mark);
+    mark_inliners(obj, mark);
 
     NativeFunction* func = force_as<NativeFunction>(obj);
 
