@@ -24,6 +24,9 @@
 
 #include "ontology.hpp"
 
+#include "capi/handle.hpp"
+#include "builtin/nativemethod.hpp"
+
 #include <gdtoa.h>
 
 #include <unistd.h>
@@ -148,6 +151,15 @@ namespace rubinius {
     s->data(state, ba->fetch_bytes(state, start, count));
 
     return s;
+  }
+
+  void String::update_handle() {
+    if(!inflated_header_p()) return;
+
+    capi::Handle* handle = inflated_header()->handle();
+    if(!handle) return;
+
+    handle->update(NativeMethodEnvironment::get());
   }
 
   static bool byte_compatible_p(Encoding* enc) {
@@ -600,10 +612,10 @@ namespace rubinius {
   native_int String::char_size(STATE) {
     if(num_chars_->nil_p()) {
       if(LANGUAGE_18_ENABLED(state)) {
-        num_chars_ = num_bytes_;
+        num_chars(state, num_bytes_);
       } else {
         if(byte_compatible_p(encoding_)) {
-          num_chars_ = num_bytes_;
+          num_chars(state, num_bytes_);
         } else {
           OnigEncodingType* enc = encoding_->get_encoding();
           native_int chars;
@@ -627,7 +639,7 @@ namespace rubinius {
             }
           }
 
-          num_chars_ = Fixnum::from(chars);
+          num_chars(state, Fixnum::from(chars));
         }
       }
     }
