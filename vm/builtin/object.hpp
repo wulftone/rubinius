@@ -6,6 +6,7 @@
 #include "vm.hpp"
 #include "vm/oop.hpp"
 #include "vm/type_info.hpp"
+#include "vm/lookup_data.hpp"
 
 #include "executor.hpp"
 
@@ -23,7 +24,7 @@ namespace rubinius {
   template <class T> \
   void name(T state, type* obj) { \
     name ## _ = obj; \
-    if(zone() == MatureObjectZone) this->write_barrier(state, obj); \
+    if(mature_object_p()) this->write_barrier(state, obj); \
   }
 
 /**
@@ -46,14 +47,12 @@ namespace rubinius {
   attr_writer(name, type)
 
   /* Forwards */
-  class MetaClass;
   class Fixnum;
   class Integer;
   class String;
   class Module;
   class Executable;
   class Array;
-  class Message;
   class TypeInfo;
 
   class Object;
@@ -184,13 +183,20 @@ namespace rubinius {
         Object* block = cNil, bool allow_private = true);
     Object* send(STATE, CallFrame* caller, Symbol* name, bool allow_private = true);
 
+    Object* send_prim(STATE, CallFrame* call_frame, Executable* exec, Module* mod, Arguments& args,
+        Symbol* min_visibility);
+
     /**
-     *  Perform a send from Ruby.
-     *
-     *  Uses Task::send_message_slowly().
+     *  Ruby #send/#__send__
      */
     // Rubinius.primitive? :object_send
-    Object* send_prim(STATE, CallFrame* call_frame, Executable* exec, Module* mod, Arguments& args);
+    Object* private_send_prim(STATE, CallFrame* call_frame, Executable* exec, Module* mod, Arguments& args);
+
+    /**
+     *  Ruby #public_send
+     */
+    // Rubinius.primitive? :object_public_send
+    Object* public_send_prim(STATE, CallFrame* call_frame, Executable* exec, Module* mod, Arguments& args);
 
 
   public:   /* Ruby interface */
@@ -263,6 +269,12 @@ namespace rubinius {
 
     /** Reset the object id */
     void reset_id(STATE);
+
+    // Rubinius.primitive :object_infect
+    Object* infect_prim(STATE, Object* obj, Object* other) {
+      other->infect(state, obj);
+      return obj;
+    }
 
     /**
      * Taints other if this is tainted.
@@ -374,6 +386,12 @@ namespace rubinius {
       return fixnum_p() ? cTrue : cFalse;
     }
 
+    /**
+     * Checks if object is frozen and raises RuntimeError if it is.
+     * Similar to CRuby rb_check_frozen
+     */
+    void check_frozen(STATE);
+
   public:   /* accessors */
 
     /* klass_ from ObjectHeader. */
@@ -399,12 +417,12 @@ namespace rubinius {
     };
 
   private:
-    /**
-     * Checks if object is frozen and raises RuntimeError if it is.
-     * Similar to CRuby rb_check_frozen
-     */
-    void check_frozen(STATE);
-
+    // Define these as private and without implementation so we
+    // don't accidently let C++ create them.
+    Object();
+    ~Object();
+    Object(const Object&);
+    Object& operator= (const Object&);
   };
 
 

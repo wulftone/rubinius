@@ -2,9 +2,8 @@
 
 class Module
 
-
   def const_get(name, inherit = true)
-    name = normalize_const_name(name)
+    name = Rubinius::Type.coerce_to_constant_name name
 
     current, constant = self, undefined
 
@@ -34,7 +33,7 @@ class Module
   end
 
   def const_defined?(name, search_parents=true)
-    name = normalize_const_name(name)
+    name = Rubinius::Type.coerce_to_constant_name name
     return true if @constant_table.has_key? name
 
     # a silly special case
@@ -55,10 +54,6 @@ class Module
     end
 
     return false
-  end
-
-  def name
-    @module_name ? @module_name.to_s : nil
   end
 
   def attr(*attributes)
@@ -83,11 +78,6 @@ class Module
 
   private :attr
 
-  def class_variable_set(key, value)
-    raise RuntimeError, "can't modify frozen #{self.class}" if frozen?
-    __class_variable_set__(key, value)
-  end
-
   # Install a new Autoload object into the constants table
   # See kernel/common/autoload.rb
   def autoload(name, path)
@@ -97,7 +87,7 @@ class Module
 
     return if Rubinius::CodeLoader.feature_provided?(path)
 
-    name = normalize_const_name(name)
+    name = Rubinius::Type.coerce_to_constant_name name
 
     if existing = @constant_table[name]
       if existing.kind_of? Autoload

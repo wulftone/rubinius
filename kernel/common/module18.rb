@@ -1,9 +1,10 @@
 # -*- encoding: us-ascii -*-
 
 class Module
+  private :remove_class_variable
 
   def const_get(name)
-    name = normalize_const_name(name)
+    name = Rubinius::Type.coerce_to_constant_name name
 
     current, constant = self, undefined
 
@@ -29,7 +30,7 @@ class Module
   end
 
   def const_defined?(name)
-    name = normalize_const_name(name)
+    name = Rubinius::Type.coerce_to_constant_name name
     return true if @constant_table.has_key? name
 
     # a silly special case
@@ -55,8 +56,6 @@ class Module
 
   private :attr
 
-  alias_method :class_variable_set, :__class_variable_set__
-
   # Install a new Autoload object into the constants table
   # See kernel/common/autoload.rb
   def autoload(name, path)
@@ -68,7 +67,7 @@ class Module
 
     return if Rubinius::CodeLoader.feature_provided?(path)
 
-    name = normalize_const_name(name)
+    name = Rubinius::Type.coerce_to_constant_name name
 
     if existing = @constant_table[name]
       if existing.kind_of? Autoload

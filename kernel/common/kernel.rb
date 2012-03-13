@@ -10,6 +10,7 @@ module Kernel
     return nil if name == :__block__ or name == :__script__
     return name
   end
+  module_function :__method__
 
   ##
   # MRI uses a macro named StringValue which has essentially the same
@@ -237,8 +238,6 @@ module Kernel
     self
   end
 
-  alias_method :object_id, :__id__
-
   # The "sorta" operator, also known as the case equality operator.
   # Generally while #eql? and #== are stricter, #=== is often used
   # to denote an acceptable match or inclusion. It returns true if
@@ -296,7 +295,7 @@ module Kernel
   def inspect
     # The protocol here seems odd, but it's to match MRI.
 
-    ivars = instance_variables
+    ivars = __instance_variables__
 
     # If this object has no ivars, then we call to_s and return that.
     # NOTE MRI has an additional check for when to call to_s. It also does:
@@ -316,7 +315,7 @@ module Kernel
 
     Thread.recursion_guard self do
       ivars.each do |var|
-        parts << "#{var}=#{instance_variable_get(var).inspect}"
+        parts << "#{var}=#{__instance_variable_get__(var).inspect}"
       end
     end
 
@@ -326,7 +325,7 @@ module Kernel
       str = "#{prefix} #{parts.join(' ')}>"
     end
 
-    str.taint if tainted?
+    Rubinius::Type.infect(str, self)
 
     return str
   end
@@ -424,17 +423,6 @@ module Kernel
   private :singleton_method_undefined
 
   alias_method :is_a?, :kind_of?
-
-  def method(name)
-    name = Rubinius::Type.coerce_to_symbol name
-    cm = Rubinius.find_method(self, name)
-
-    if cm
-      return Method.new(self, cm[1], cm[0], name)
-    else
-      raise NameError, "undefined method `#{name}' for #{self.inspect}"
-    end
-  end
 
   def nil?
     false

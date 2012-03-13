@@ -1,7 +1,34 @@
 # -*- encoding: us-ascii -*-
 
 module Kernel
+  def method(name)
+    name = Rubinius::Type.coerce_to_symbol name
+    cm = Rubinius.find_method(self, name)
+
+    if cm
+      Method.new(self, cm[1], cm[0], name)
+    elsif respond_to_missing?(name, true)
+      Method.new(self, self.class, Rubinius::MissingMethod.new(self,  name), name)
+    else
+      raise NameError, "undefined method `#{name}' for #{self.inspect}"
+    end
+  end
+
+  def public_method(name)
+    name = Rubinius::Type.coerce_to_symbol name
+    cm = Rubinius.find_public_method(self, name)
+
+    if cm
+      Method.new(self, cm[1], cm[0], name)
+    elsif respond_to_missing?(name, false)
+      Method.new(self, self.class, Rubinius::MissingMethod.new(self,  name), name)
+    else
+      raise NameError, "undefined method `#{name}' for #{self.inspect}"
+    end
+  end
+
   alias_method :__callee__, :__method__
+  module_function :__callee__
 
   def define_singleton_method(*args, &block)
     class << self
@@ -102,6 +129,19 @@ module Kernel
     raise PrimitiveFailure, "#send primitive failed"
   end
 
+  def public_send(message, *args)
+    Rubinius.primitive :object_public_send
+    raise PrimitiveFailure, "#public_send primitive failed"
+  end
+
+  # In 1.8, :object_id is an alias to :__id__ because both methods are defined
+  # on Kernel. But in 1.9, :__id__ is defined on BasicObject.
+  #
+  def object_id
+    Rubinius.primitive :object_id
+    raise PrimitiveFailure, "#object_id primitive failed"
+  end
+
   def proc(&prc)
     raise ArgumentError, "block required" unless prc
     return prc
@@ -194,9 +234,22 @@ module Kernel
   end
   module_function :Float
 
+  def Complex(*args)
+    Complex.send :convert, *args
+  end
+  module_function :Complex
+
+  def Rational(a, b = 1)
+    if a.kind_of?(Rational) && b == 1
+      a
+    else
+      Rational.send :convert, a, b
+    end
+  end
+  module_function :Rational
+
   # obj <=> other -> 0 or nil
   def <=>(other)
     self == other ? 0 : nil
   end
-
 end

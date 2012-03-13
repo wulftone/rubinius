@@ -121,7 +121,7 @@ namespace rubinius {
     // then remember other. The up side to just remembering it like
     // this is that other is rarely mature, and the remember_set is
     // flushed on each collection anyway.
-    if(zone() == MatureObjectZone) {
+    if(mature_object_p()) {
       state->memory()->remember_object(this);
     }
 
@@ -166,7 +166,12 @@ namespace rubinius {
   
   void Object::check_frozen(STATE) {
     if(frozen_p(state) == cTrue) {
-      Exception::runtime_error(state, "can't modify frozen object");
+      const char* reason = "can't modify frozen object";
+      if(LANGUAGE_18_ENABLED(state)) {
+        Exception::type_error(state, reason);
+      } else {
+        Exception::runtime_error(state, reason);
+      }
     }
   }
 
@@ -198,7 +203,7 @@ namespace rubinius {
 
   Object* Object::get_ivar_prim(STATE, Symbol* sym) {
     if(sym->is_ivar_p(state)->false_p()) {
-      return reinterpret_cast<Object*>(kPrimitiveFailed);
+      return Primitives::failure();
     }
 
     return get_ivar(state, sym);
@@ -259,7 +264,7 @@ namespace rubinius {
 
   Object* Object::ivar_defined_prim(STATE, Symbol* sym) {
     if(!sym->is_ivar_p(state)->true_p()) {
-      return reinterpret_cast<Object*>(kPrimitiveFailed);
+      return Primitives::failure();
     }
 
     return ivar_defined(state, sym);
@@ -416,8 +421,10 @@ namespace rubinius {
       other->taint(state);
     }
 
-    if(is_untrusted_p()) {
-      other->untrust(state);
+    if(!LANGUAGE_18_ENABLED(state)) {
+      if(is_untrusted_p()) {
+        other->untrust(state);
+      }
     }
   }
 
@@ -469,7 +476,7 @@ namespace rubinius {
 
   Object* Object::send(STATE, CallFrame* caller, Symbol* name, Array* ary,
       Object* block, bool allow_private) {
-    LookupData lookup(this, this->lookup_begin(state), allow_private);
+    LookupData lookup(this, this->lookup_begin(state), allow_private ? G(sym_private) : G(sym_protected));
     Dispatch dis(name);
 
     Arguments args(name, ary);
@@ -480,7 +487,7 @@ namespace rubinius {
   }
 
   Object* Object::send(STATE, CallFrame* caller, Symbol* name, bool allow_private) {
-    LookupData lookup(this, this->lookup_begin(state), allow_private);
+    LookupData lookup(this, this->lookup_begin(state), allow_private ? G(sym_private) : G(sym_protected));
     Dispatch dis(name);
 
     Arguments args(name);
@@ -491,7 +498,7 @@ namespace rubinius {
   }
 
   Object* Object::send_prim(STATE, CallFrame* call_frame, Executable* exec, Module* mod,
-                            Arguments& args) {
+                            Arguments& args, Symbol* min_visibility) {
     if(args.total() < 1) return Primitives::failure();
 
     // Don't shift the argument because we might fail and we need Arguments
@@ -519,9 +526,17 @@ namespace rubinius {
     args.set_name(sym);
 
     Dispatch dis(sym);
-    LookupData lookup(this, this->lookup_begin(state), true);
+    LookupData lookup(this, this->lookup_begin(state), min_visibility);
 
     return dis.send(state, call_frame, lookup, args);
+  }
+
+  Object* Object::private_send_prim(STATE, CallFrame* call_frame, Executable* exec, Module* mod, Arguments& args) {
+    return send_prim(state, call_frame, exec, mod, args, G(sym_private));
+  }
+
+  Object* Object::public_send_prim(STATE, CallFrame* call_frame, Executable* exec, Module* mod, Arguments& args) {
+    return send_prim(state, call_frame, exec, mod, args, G(sym_public));
   }
 
   void Object::set_field(STATE, size_t index, Object* val) {
@@ -556,7 +571,7 @@ namespace rubinius {
 
   Object* Object::set_ivar_prim(STATE, Symbol* sym, Object* val) {
     if(sym->is_ivar_p(state)->false_p()) {
-      return reinterpret_cast<Object*>(kPrimitiveFailed);
+      return Primitives::failure();
     }
 
     return set_ivar(state, sym, val);
@@ -657,10 +672,10 @@ namespace rubinius {
 
       if(Fixnum* fix = try_as<Fixnum>(this)) {
         name << fix->to_native();
-        return String::create(state, name.str().c_str());
+        return String::create(state, name.str().c_str(), name.str().size());
       } else if(Symbol* sym = try_as<Symbol>(this)) {
         name << ":\"" << sym->debug_str(state) << "\"";
-        return String::create(state, name.str().c_str());
+        return String::create(state, name.str().c_str(), name.str().size());
       }
     }
 
@@ -669,21 +684,23 @@ namespace rubinius {
     } else {
       name << "#<";
       if(Module* mod = try_as<Module>(this)) {
-        if(mod->name()->nil_p()) {
+        if(mod->module_name()->nil_p()) {
           name << "Class";
         } else {
-          name << mod->name()->debug_str(state);
+          name << mod->debug_str(state);
         }
+        name << "(";
         if(SingletonClass* sc = try_as<SingletonClass>(mod)) {
-          name << "(" << sc->true_superclass(state)->name()->debug_str(state) << ")";
+          name << sc->true_superclass(state)->debug_str(state);
         } else {
-          name << "(" << this->class_object(state)->name()->debug_str(state) << ")";
+          name << class_object(state)->debug_str(state);
         }
+        name << ")";
       } else {
-        if(this->class_object(state)->name()->nil_p()) {
+        if(this->class_object(state)->module_name()->nil_p()) {
           name << "Object";
         } else {
-          name << this->class_object(state)->name()->debug_str(state);
+          name << class_object(state)->debug_str(state);
         }
       }
     }
@@ -696,7 +713,7 @@ namespace rubinius {
     }
     name << ">";
 
-    return String::create(state, name.str().c_str());
+    return String::create(state, name.str().c_str(), name.str().size());
   }
 
   Object* Object::show(STATE) {
@@ -719,25 +736,28 @@ namespace rubinius {
   }
 
   Object* Object::taint(STATE) {
-    if(reference_p()) set_tainted();
+    if(!is_tainted_p()) {
+      check_frozen(state);
+      if (reference_p()) set_tainted();
+    }
     return this;
   }
 
   Object* Object::tainted_p(STATE) {
-    if(reference_p() && is_tainted_p()) return cTrue;
+    if(is_tainted_p()) return cTrue;
     return cFalse;
   }
 
   Object* Object::trust(STATE) {
-    if(untrusted_p(state) == cTrue) {
+    if(is_untrusted_p()) {
       check_frozen(state);
-      if(reference_p()) set_untrusted(0);
+      set_untrusted(0);
     }
     return this;
   }
 
   Object* Object::untrust(STATE) {
-    if(untrusted_p(state) == cFalse) {
+    if(!is_untrusted_p()) {
       check_frozen(state);
       if(reference_p()) set_untrusted();
     }
@@ -745,7 +765,7 @@ namespace rubinius {
   }
 
   Object* Object::untrusted_p(STATE) {
-    if(reference_p() && is_untrusted_p()) return cTrue;
+    if(is_untrusted_p()) return cTrue;
     return cFalse;
   }
 
@@ -754,13 +774,15 @@ namespace rubinius {
   }
 
   Object* Object::untaint(STATE) {
-    if(reference_p()) set_tainted(0);
+    if(is_tainted_p()) {
+      check_frozen(state);
+      if(reference_p()) set_tainted(0);
+    }
     return this;
   }
 
   Object* Object::respond_to(STATE, Symbol* name, Object* priv) {
-    LookupData lookup(this, lookup_begin(state));
-    lookup.priv = CBOOL(priv);
+    LookupData lookup(this, lookup_begin(state), CBOOL(priv) ? G(sym_private) : G(sym_protected));
 
     Dispatch dis(name);
 
@@ -782,9 +804,7 @@ namespace rubinius {
       return Primitives::failure();
     }
 
-    LookupData lookup(this, lookup_begin(state));
-    lookup.priv = false;
-
+    LookupData lookup(this, lookup_begin(state), G(sym_protected));
     Dispatch dis(name);
 
     if(!GlobalCache::resolve(state, name, dis, lookup)) {

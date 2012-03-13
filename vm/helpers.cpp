@@ -140,9 +140,7 @@ namespace rubinius {
 
     /** @todo Remove redundancy between this and sends. --rue */
     Tuple* locate_method_on(STATE, CallFrame* call_frame, Object* recv, Symbol* name, Object* priv) {
-      LookupData lookup(recv, recv->lookup_begin(state));
-      lookup.priv = (priv == cTrue);
-
+      LookupData lookup(recv, recv->lookup_begin(state), CBOOL(priv) ? G(sym_private) : G(sym_protected));
       Dispatch dis(name);
 
       if(!GlobalCache::resolve(state, dis.name, dis, lookup)) {
@@ -170,12 +168,7 @@ namespace rubinius {
       if(super->nil_p()) super = G(object);
       Class* cls = Class::create(state, as<Class>(super));
 
-      if(under == G(object)) {
-        cls->name(state, name);
-      } else {
-        cls->set_name(state, under, name);
-      }
-
+      cls->set_name(state, name, under);
       under->set_const(state, name, cls);
 
       return cls;
@@ -186,9 +179,9 @@ namespace rubinius {
       if(cls->true_superclass(state) != super) {
         std::ostringstream message;
         message << "Superclass mismatch: given "
-                << as<Module>(super)->name()->debug_str(state)
+                << as<Module>(super)->debug_str(state)
                 << " but previously set to "
-                << cls->true_superclass(state)->name()->debug_str(state);
+                << cls->true_superclass(state)->debug_str(state);
         Exception* exc =
           Exception::make_type_error(state, Class::type, super, message.str().c_str());
         exc->locations(state, Location::from_call_stack(state, call_frame));
@@ -261,7 +254,7 @@ namespace rubinius {
 
       module = Module::create(state);
 
-      module->set_name(state, under, name);
+      module->set_name(state, name, under);
       under->set_const(state, name, module);
 
       return module;

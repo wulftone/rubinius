@@ -191,7 +191,7 @@ namespace rubinius {
     LLVMState::shutdown(state);
 #endif
 
-    SignalHandler::shutdown();
+    SignalHandler::pause();
     QueryAgent::shutdown(state);
 
     state->shared().pre_exec();
@@ -215,9 +215,19 @@ namespace rubinius {
     void* old_handlers[NSIG];
 
     // Reset all signal handlers to the defaults, so any we setup in Rubinius
-    // won't leak through.
+    // won't leak through. We need to use sigaction() here since signal()
+    // provides no control over SA_RESTART and can use the wrong value causing
+    // blocking I/O methods to become uninterruptable.
     for(int i = 0; i < NSIG; i++) {
-      old_handlers[i] = (void*)signal(i, SIG_DFL);
+      struct sigaction action;
+      struct sigaction old_action;
+
+      action.sa_handler = SIG_DFL;
+      action.sa_flags = 0;
+      sigfillset(&action.sa_mask);
+
+      sigaction(i, &action, &old_action);
+      old_handlers[i] = (void*)old_action.sa_handler;
     }
 
     (void)::execvp(path->c_str(state), argv);
@@ -225,7 +235,13 @@ namespace rubinius {
     // Hmmm, execvp failed, we need to recover here.
 
     for(int i = 0; i < NSIG; i++) {
-      signal(i, (void(*)(int))old_handlers[i]);
+      struct sigaction action;
+
+      action.sa_handler = (void(*)(int))old_handlers[i];
+      action.sa_flags = 0;
+      sigfillset(&action.sa_mask);
+
+      sigaction(i, &action, NULL);
     }
 
     delete[] argv;
@@ -234,7 +250,7 @@ namespace rubinius {
     LLVMState::start(state);
 #endif
 
-    SignalHandler::on_fork(state, false);
+    SignalHandler::on_fork(state);
 
     /* execvp() returning means it failed. */
     Exception::errno_error(state, "execvp(2) failed");
@@ -514,7 +530,7 @@ namespace rubinius {
       return cTrue;
     }
 
-    return String::create(state, ent->value.c_str());
+    return String::create(state, ent->value.c_str(), ent->value.size());
   }
 
   Object* System::vm_get_config_section(STATE, String* section) {
@@ -525,8 +541,10 @@ namespace rubinius {
 
     Array* ary = Array::create(state, list->size());
     for(size_t i = 0; i < list->size(); i++) {
-      String* var = String::create(state, list->at(i)->variable.c_str());
-      String* val = String::create(state, list->at(i)->value.c_str());
+      std::string variable = list->at(i)->variable;
+      std::string value    = list->at(i)->value;
+      String* var = String::create(state, variable.c_str(), variable.size());
+      String* val = String::create(state, value.c_str(), value.size());
 
       ary->set(state, i, Tuple::from(state, 2, var, val));
     }
@@ -631,10 +649,10 @@ namespace rubinius {
 
       if(!init(state->vm()->tooling_env())) {
         dlclose(handle);
-        return Tuple::from(state, 2, cFalse, String::create(state, path.c_str()));
+        return Tuple::from(state, 2, cFalse, String::create(state, path.c_str(), path.size()));
       }
     }
-    
+
     return Tuple::from(state, 1, cTrue);
   }
 
@@ -813,9 +831,9 @@ namespace rubinius {
       if(cls->true_superclass(state) != super) {
         std::ostringstream message;
         message << "Superclass mismatch: given "
-                << as<Module>(super)->name()->debug_str(state)
+                << as<Module>(super)->debug_str(state)
                 << " but previously set to "
-                << cls->true_superclass(state)->name()->debug_str(state);
+                << cls->true_superclass(state)->debug_str(state);
 
         Exception* exc =
           Exception::make_type_error(state, Class::type, super,
@@ -833,12 +851,7 @@ namespace rubinius {
     if(super->nil_p()) super = G(object);
     Class* cls = Class::create(state, as<Class>(super));
 
-    if(under == G(object)) {
-      cls->name(state, name);
-    } else {
-      cls->set_name(state, under, name);
-    }
-
+    cls->set_name(state, name, under);
     under->set_const(state, name, cls);
 
     return cls;
@@ -863,15 +876,14 @@ namespace rubinius {
 
     Module* module = Module::create(state);
 
-    module->set_name(state, under, name);
+    module->set_name(state, name, under);
     under->set_const(state, name, module);
 
     return module;
   }
 
-  Tuple* System::vm_find_method(STATE, Object* recv, Symbol* name) {
-    LookupData lookup(recv, recv->lookup_begin(state));
-    lookup.priv = true;
+  static Tuple* find_method(STATE, Object* recv, Symbol* name, Symbol* min_visibility) {
+    LookupData lookup(recv, recv->lookup_begin(state), min_visibility);
 
     Dispatch dis(name);
 
@@ -880,6 +892,14 @@ namespace rubinius {
     }
 
     return Tuple::from(state, 2, dis.method, dis.module);
+  }
+
+  Tuple* System::vm_find_method(STATE, Object* recv, Symbol* name) {
+    return find_method(state, recv, name, G(sym_private));
+  }
+
+  Tuple* System::vm_find_public_method(STATE, Object* recv, Symbol* name) {
+    return find_method(state, recv, name, G(sym_public));
   }
 
   Object* System::vm_add_method(STATE, GCToken gct, Symbol* name,
@@ -1081,7 +1101,7 @@ namespace rubinius {
   Object* System::vm_catch(STATE, Object* dest, Object* obj,
                            CallFrame* call_frame)
   {
-    LookupData lookup(obj, obj->lookup_begin(state), false);
+    LookupData lookup(obj, obj->lookup_begin(state), G(sym_protected));
     Dispatch dis(state->symbol("call"));
     Arguments args(state->symbol("call"), 1, &dest);
     args.set_recv(obj);
@@ -1619,5 +1639,18 @@ namespace rubinius {
     size_t b = hash_trie_bit(hash, level);
 
     return Integer::from(state, m & ~b);
+  }
+
+  String* System::vm_get_module_name(STATE, Module* mod) {
+    return mod->get_name(state);
+  }
+
+  Object* System::vm_set_module_name(STATE, Module* mod, Object* name, Object* under) {
+    if(name->nil_p()) return cNil;
+
+    if(under->nil_p()) under = G(object);
+    mod->set_name(state, as<Symbol>(name), as<Module>(under));
+
+    return cNil;
   }
 }
