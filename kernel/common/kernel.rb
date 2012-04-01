@@ -63,6 +63,11 @@ module Kernel
   end
   module_function :warning
 
+  def exec(*args)
+    Process.exec(*args)
+  end
+  module_function :exec
+
   def exit(code=0)
     Process.exit(code)
   end
@@ -74,7 +79,6 @@ module Kernel
   module_function :exit!
 
   def abort(msg=nil)
-    msg = StringValue(msg) if msg
     Process.abort msg
   end
   module_function :abort

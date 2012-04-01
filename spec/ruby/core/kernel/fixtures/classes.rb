@@ -18,9 +18,8 @@ module KernelSpecs
   end
 
   class Method
-    def abort(*msg)
-      super
-    end
+    public :abort, :exec, :exit, :exit!, :fork
+    public :spawn if respond_to?(:spawn, true)
   end
 
   class Methods
