@@ -47,11 +47,39 @@ describe "Time#-" do
 
   ruby_version_is "1.9" do
     it "tracks microseconds" do
-      time = Time.at(Rational(777777, 1000000))
-      time -= Rational(654321, 1000000)
-      time.usec.should == 123456
-      time -= Rational(123456, 1000000)
+      time = Time.at(Rational(777_777, 1_000_000))
+      time -= Rational(654_321, 1_000_000)
+      time.usec.should == 123_456
+      time -= Rational(123_456, 1_000_000)
       time.usec.should == 0
+    end
+
+    it "tracks nanoseconds" do
+      time = Time.at(Rational(999_999_999, 1_000_000_000))
+      time -= Rational(876_543_210, 1_000_000_000)
+      time.nsec.should == 123_456_789
+      time -= Rational(123_456_789, 1_000_000_000)
+      time.nsec.should == 0
+    end
+
+    it "maintains precision" do
+      time = Time.at(10) - Rational(1_000_000_000_000_001, 1_000_000_000_000_000)
+      time.should_not == Time.at(9)
+    end
+
+    it "maintains microseconds precision" do
+      time = Time.at(10) - Rational(1_000_000_000_000_001, 1_000_000_000_000_000)
+      time.usec.should == 999_999
+    end
+
+    it "maintains nanoseconds precision" do
+      time = Time.at(10) - Rational(1_000_000_000_000_001, 1_000_000_000_000_000)
+      time.nsec.should == 999_999_999
+    end
+
+    it "maintains subseconds precision" do
+      time = Time.at(0) - Rational(1_000_000_000_000_001, 1_000_000_000_000_000)
+      time.subsec.should == Rational(999_999_999_999_999, 1_000_000_000_000_000)
     end
   end
 
