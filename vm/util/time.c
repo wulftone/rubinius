@@ -100,7 +100,7 @@ typedef unsigned long unsigned_time_t;
 // lifted from MRI's configure on OS X, probably right on most unix platforms?
 #define NEGATIVE_TIME_T 1
 
-const char* timezone_extended(struct tm* tptr) {
+const char* timezone_extended(const struct tm* tptr) {
 #ifdef HAVE_TM_ZONE
   return tptr->tm_zone;
 #elif HAVE_TZNAME && HAVE_DAYLIGHT
@@ -860,27 +860,10 @@ strftime_extended(char *s, size_t maxsize, const char *format, const struct tm *
 				tp = "UTC";
 				break;
 			}
-#if defined(HAVE_TZNAME) && defined(HAVE_DAYLIGHT)
-			i = (daylight && timeptr->tm_isdst > 0); /* 0 or 1 */
-			tp = tzname[i];
-#else
-#ifdef HAVE_TM_ZONE
-			tp = timeptr->tm_zone;
-#else
-#ifdef HAVE_TM_NAME
-			tp = timeptr->tm_name;
-#else
-#ifdef HAVE_TIMEZONE
-			gettimeofday(& tv, & zone);
-#ifdef TIMEZONE_VOID
-			tp = timezone();
-#else
-			tp = timezone(zone.tz_minuteswest, timeptr->tm_isdst > 0);
-#endif /* TIMEZONE_VOID */
-#endif /* HAVE_TIMEZONE */
-#endif /* HAVE_TM_NAME */
-#endif /* HAVE_TM_ZONE */
-#endif /* HAVE_TZNAME */
+			tp = timezone_extended(timeptr);
+			if (!tp) {
+				tp = "";
+			}
 			i = strlen(tp);
 			break;
 
@@ -941,8 +924,8 @@ strftime_extended(char *s, size_t maxsize, const char *format, const struct tm *
 				     timeptr->tm_year + 1900L);
 			if (w < 0) goto err;
 			for (i = 3; i < 6; i++)
-				if (islower(s[i]))
-					s[i] = toupper(s[i]);
+				if (islower((int)s[i]))
+					s[i] = toupper((int)s[i]);
 			s += w;
 			continue;
 #endif
@@ -1100,12 +1083,12 @@ strftime_extended(char *s, size_t maxsize, const char *format, const struct tm *
 			switch (flags & (BIT_OF(UPPER)|BIT_OF(LOWER))) {
 			case BIT_OF(UPPER):
 				do {
-					if (islower(*s)) *s = toupper(*s);
+					if (islower((int)*s)) *s = toupper((int)*s);
 				} while (s++, --i);
 				break;
 			case BIT_OF(LOWER):
 				do {
-					if (isupper(*s)) *s = tolower(*s);
+					if (isupper((int)*s)) *s = tolower((int)*s);
 				} while (s++, --i);
 				break;
 			default:

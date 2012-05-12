@@ -89,11 +89,22 @@ $dlext = RbConfig::CONFIG["DLEXT"]
 $CC = ENV['CC']
 
 class SpecRunner
-  attr_reader :exit_status
+
+  @at_exit_handler_set = false
+  @at_exit_status = 0
+
+  def self.set_at_exit_handler
+    return if @at_exit_handler_set
+
+    at_exit { exit @at_exit_status }
+    @at_exit_handler_set = true
+  end
+
+  def self.set_at_exit_status(status)
+    @at_exit_status = status
+  end
 
   def initialize
-    @exit_status = 0
-
     unless File.directory? BUILD_CONFIG[:runtime]
       # Setting these enables the specs to run when rbx has been configured
       # to be installed, but rake install has not been run yet.
@@ -105,18 +116,16 @@ class SpecRunner
     ENV.delete("RUBYOPT")
 
     @handler = lambda do |ok, status|
-      @exit_status = status.exitstatus unless ok
+      self.class.set_at_exit_status(status.exitstatus) unless ok
     end
   end
 
   def run(flags=nil)
+    self.class.set_at_exit_handler
+
     sh("bin/mspec ci #{ENV['CI_MODE_FLAG'] || flags} -d --background", &@handler)
   end
 end
-
-spec_runner = SpecRunner.new
-
-at_exit { exit spec_runner.exit_status }
 
 task :default => :spec
 
@@ -195,15 +204,26 @@ namespace :clean do
   end
 end
 
-desc 'Move the preinstalled gem setup into place'
+desc 'Install the pre-installed gems'
 task :gem_bootstrap do
-  pre_gems = Dir["preinstalled-gems/data/specifications/*.gemspec"].sort
-  ins_gems = Dir["gems/rubinius/specifications/*.gemspec"].sort
-  unless pre_gems == ins_gems
-    FileUtils.rm_rf "gems/rubinius"
-    FileUtils.mkdir_p "gems/rubinius"
-    FileUtils.cp_r "preinstalled-gems/bin", "gems/bin"
-    FileUtils.cp_r "preinstalled-gems/data", "gems/rubinius/preinstalled"
+  STDOUT.puts "Installing pre-installed gems..."
+
+  rbx = "#{BUILD_CONFIG[:bindir]}/#{BUILD_CONFIG[:program_name]}"
+  gems = Dir["preinstalled-gems/*.gem"]
+  options = "--local --conservative --ignore-dependencies --no-rdoc --no-ri"
+
+  BUILD_CONFIG[:version_list].each do |ver|
+    gems.each do |gem|
+      parts = File.basename(gem, ".gem").split "-"
+      gem_name = parts[0..-2].join "-"
+      gem_version = parts[-1]
+
+      system "#{rbx} -X#{ver} -S gem query --name-matches #{gem_name} --installed --version #{gem_version} > #{DEV_NULL}"
+
+      unless $?.success?
+        sh "#{rbx} -X#{ver} -S gem install #{options} #{gem}"
+      end
+    end
   end
 end
 
@@ -216,6 +236,8 @@ task :docs do
 
   Rubinius::Documentation.main
 end
+
+spec_runner = SpecRunner.new
 
 desc "Run the CI specs in 1.8 mode but do not rebuild on failure"
 task :spec18 => %w[build vm:test] do

@@ -47,8 +47,6 @@ using namespace rubinius;
 #define stack_pop() (*STACK_PTR--)
 #define stack_set_top(val) *STACK_PTR = (val)
 
-#define USE_JUMP_TABLE
-
 #define stack_top() (*STACK_PTR)
 #define stack_back(count) (*(STACK_PTR - count))
 #define stack_clear(count) STACK_PTR -= count
@@ -59,11 +57,7 @@ using namespace rubinius;
 
 #define stack_local(which) call_frame->stk[vmm->stack_size - which - 1]
 
-#define next_int ((opcode)(stream[call_frame->inc_ip()]))
-
 #define both_fixnum_p(_p1, _p2) ((uintptr_t)(_p1) & (uintptr_t)(_p2) & TAG_FIXNUM)
-
-#define CHECK_EXCEPTION(val) if(val == NULL) { goto exception; }
 
 #define JUMP_DEBUGGING \
   return VMMethod::debugger_interpreter_continue(state, vmm, call_frame, \
@@ -77,9 +71,6 @@ using namespace rubinius;
 
 #define SET_CALL_FLAGS(val) is.call_flags = (val)
 #define CALL_FLAGS() is.call_flags
-
-#define SET_ALLOW_PRIVATE(val) is.allow_private = (val)
-#define ALLOW_PRIVATE() is.allow_private
 
 Object* VMMethod::interpreter(STATE,
                               VMMethod* const vmm,

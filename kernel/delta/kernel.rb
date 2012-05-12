@@ -108,6 +108,10 @@ module Kernel
     io
   end
 
+  get = proc { |key| Thread.current[:$_] }
+  set = proc { |key, val| Thread.current[:$_] = val }
+  Rubinius::Globals.set_hook(:$_, get, set)
+
   Rubinius::Globals.add_alias :$stdout, :$>
   Rubinius::Globals.set_filter(:$stdout, write_filter)
   Rubinius::Globals.set_filter(:$stderr, write_filter)
@@ -117,13 +121,21 @@ module Kernel
   set = proc { |key, val| Rubinius.kcode = val }
   Rubinius::Globals.set_hook(:$KCODE, get, set)
 
+  set = proc do |key, val|
+    val = Rubinius::Type.coerce_to val, String, :to_str
+    Rubinius.invoke_primitive :vm_set_process_title, val
+  end
+  Rubinius::Globals.set_hook(:$0, :[], set)
+
+  set = proc { |key, val| STDERR.puts("WARNING: $SAFE is not supported on Rubinius."); val }
+  Rubinius::Globals.set_hook(:$SAFE, :[], set)
+
   # Alias $0 $PROGRAM_NAME
   Rubinius::Globals.add_alias(:$0, :$PROGRAM_NAME)
 
   Rubinius::Globals.read_only :$:, :$LOAD_PATH, :$-I
   Rubinius::Globals.read_only :$", :$LOADED_FEATURES
   Rubinius::Globals.read_only :$<
-  Rubinius::Globals.read_only :$?
 
   Rubinius::Globals[:$-a] = false
   Rubinius::Globals[:$-l] = false

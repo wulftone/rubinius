@@ -54,6 +54,8 @@
 #include <unistd.h>
 #include <sys/param.h>
 
+#include "missing/setproctitle.h"
+
 namespace rubinius {
 
   // Used by the segfault reporter. Calculated up front to avoid
@@ -191,7 +193,7 @@ namespace rubinius {
     }
 
     // print out all the frames to stderr
-    static const char header[] = 
+    static const char header[] =
       "Rubinius Crash Report #rbxcrashreport\n\n"
       "Error: signal ";
 
@@ -401,6 +403,8 @@ namespace rubinius {
     }
 
     state->vm()->set_const("ARGV", ary);
+
+    ruby_init_setproctitle(argc, argv);
 
     // Now finish up with the config
     if(config.print_config > 1) {
