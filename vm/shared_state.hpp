@@ -132,6 +132,8 @@ namespace rubinius {
       return &threads_;
     }
 
+    Array* vm_threads(STATE);
+
     void add_managed_thread(ManagedThread* thr);
     void remove_managed_thread(ManagedThread* thr);
 
@@ -242,7 +244,9 @@ namespace rubinius {
 
     bool check_gc_p() {
       bool c = check_gc_;
-      check_gc_ = false;
+      if (unlikely(c)) {
+        check_gc_ = false;
+      }
       return c;
     }
 

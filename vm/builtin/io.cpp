@@ -35,6 +35,7 @@
 
 #include "vm/object_utils.hpp"
 #include "vm/on_stack.hpp"
+#include "vm/configuration.hpp"
 
 #include "capi/handle.hpp"
 
@@ -539,7 +540,11 @@ namespace rubinius {
         }
       }
 
-      ::close(fd);
+      if (LANGUAGE_18_ENABLED(state)) {
+        ::close(fd);
+      } else if (io->autoclose_ != cFalse) {
+        ::close(fd);
+      }
     }
   }
 
@@ -703,6 +708,37 @@ namespace rubinius {
     int n = ::write(descriptor_->to_native(), buf->byte_address(), buf_size);
     if(n == -1) Exception::errno_error(state, "write_nonblock");
     return Fixnum::from(n);
+  }
+
+  Object* IO::advise(STATE, Symbol* advice_name, Integer* offset, Integer* len) {
+#ifdef HAVE_POSIX_FADVISE
+    int advice = 0;
+
+    if (advice_name == state->symbol("normal")) {
+      advice = POSIX_FADV_NORMAL;
+    } else if (advice_name == state->symbol("sequential")) {
+      advice = POSIX_FADV_SEQUENTIAL;
+    } else if (advice_name == state->symbol("random")) {
+      advice = POSIX_FADV_RANDOM;
+    } else if (advice_name == state->symbol("willneed")) {
+      advice = POSIX_FADV_WILLNEED;
+    } else if (advice_name == state->symbol("dontneed")) {
+      advice = POSIX_FADV_DONTNEED;
+    } else if (advice_name == state->symbol("noreuse")) {
+      advice = POSIX_FADV_NOREUSE;
+    } else {
+      return Primitives::failure();
+    }
+
+    int erno = posix_fadvise(to_fd(), offset->to_long_long(), len->to_long_long(), advice);
+
+    if (erno) {
+      Exception::errno_error(state, "posfix_fadvise(2) failed", erno);
+    }
+
+#endif
+
+    return cNil;
   }
 
   Array* ipaddr(STATE, struct sockaddr* addr, socklen_t len) {
@@ -1097,10 +1133,9 @@ failed: /* try next '*' position */
     struct iovec vec[1];
     char buf[1];
 
-    struct {
-      struct cmsghdr hdr;
-      char pad[8+sizeof(int)+8];
-    } cmsg;
+    static const int cmsg_space = CMSG_SPACE(sizeof(int));
+    struct cmsghdr *cmsg;
+    char cmsg_buf[cmsg_space];
 
     fd = io->descriptor()->to_native();
 
@@ -1114,16 +1149,17 @@ failed: /* try next '*' position */
     msg.msg_iov = vec;
     msg.msg_iovlen = 1;
 
-    msg.msg_control = (caddr_t)&cmsg;
-    msg.msg_controllen = CMSG_SPACE(sizeof(int));
+    msg.msg_control = (caddr_t)cmsg_buf;
+    msg.msg_controllen = sizeof(cmsg_buf);
     msg.msg_flags = 0;
-    memset(&cmsg, 0, sizeof(cmsg));
-    cmsg.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-    cmsg.hdr.cmsg_level = SOL_SOCKET;
-    cmsg.hdr.cmsg_type = SCM_RIGHTS;
+    cmsg = CMSG_FIRSTHDR(&msg);
+    memset(cmsg_buf, 0, sizeof(cmsg_buf));
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
 
     // Workaround for GCC's broken strict-aliasing checks.
-    int* fd_data = (int*)CMSG_DATA(&cmsg.hdr);
+    int* fd_data = (int*)CMSG_DATA(cmsg);
     *fd_data = fd;
 
     if(sendmsg(descriptor()->to_native(), &msg, 0) == -1) {
@@ -1142,10 +1178,9 @@ failed: /* try next '*' position */
     struct iovec vec[1];
     char buf[1];
 
-    struct {
-      struct cmsghdr hdr;
-      char pad[8+sizeof(int)+8];
-    } cmsg;
+    static const int cmsg_space = CMSG_SPACE(sizeof(int));
+    struct cmsghdr *cmsg;
+    char cmsg_buf[cmsg_space];
 
     msg.msg_name = NULL;
     msg.msg_namelen = 0;
@@ -1157,16 +1192,17 @@ failed: /* try next '*' position */
     msg.msg_iov = vec;
     msg.msg_iovlen = 1;
 
-    msg.msg_control = (caddr_t)&cmsg;
-    msg.msg_controllen = CMSG_SPACE(sizeof(int));
+    msg.msg_control = (caddr_t)cmsg_buf;
+    msg.msg_controllen = sizeof(cmsg_buf);
     msg.msg_flags = 0;
-    memset(&cmsg, 0, sizeof(cmsg));
-    cmsg.hdr.cmsg_len = CMSG_LEN(sizeof(int));
-    cmsg.hdr.cmsg_level = SOL_SOCKET;
-    cmsg.hdr.cmsg_type = SCM_RIGHTS;
+    cmsg = CMSG_FIRSTHDR(&msg);
+    memset(cmsg_buf, 0, sizeof(cmsg_buf));
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
 
     // Workaround for GCC's broken strict-aliasing checks.
-    int* fd_data = (int *)CMSG_DATA(&cmsg.hdr);
+    int* fd_data = (int *)CMSG_DATA(cmsg);
     *fd_data = -1;
 
     int read_fd = descriptor()->to_native();
@@ -1195,14 +1231,14 @@ failed: /* try next '*' position */
     }
 
     if(msg.msg_controllen != CMSG_SPACE(sizeof(int))
-        || cmsg.hdr.cmsg_len != CMSG_LEN(sizeof(int))
-        || cmsg.hdr.cmsg_level != SOL_SOCKET
-        || cmsg.hdr.cmsg_type != SCM_RIGHTS) {
+        || cmsg->cmsg_len != CMSG_LEN(sizeof(int))
+        || cmsg->cmsg_level != SOL_SOCKET
+        || cmsg->cmsg_type != SCM_RIGHTS) {
       return Primitives::failure();
     }
 
     // Workaround for GCC's broken strict-aliasing checks.
-    fd_data = (int *)CMSG_DATA(&cmsg.hdr);
+    fd_data = (int *)CMSG_DATA(cmsg);
     return Fixnum::from(*fd_data);
 #endif
   }

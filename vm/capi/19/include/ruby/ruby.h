@@ -271,6 +271,7 @@ typedef void (*RUBY_DATA_FUNC)(void*);
     cCApiEncCompatError,
     cCApiWaitReadable,
     cCApiWaitWritable,
+    cCApiEnumerator,
 
     // MUST be last
     cCApiMaxConstant
@@ -457,6 +458,7 @@ struct RFile {
 #define rb_cRational          (capi_get_constant(cCApiRational))
 #define rb_cComplex           (capi_get_constant(cCApiComplex))
 #define rb_cEncoding          (capi_get_constant(cCApiEncoding))
+#define rb_cEnumerator        (capi_get_constant(cCApiEnumerator))
 
 /* Global Module objects. */
 
@@ -1092,7 +1094,7 @@ VALUE rb_uint2big(unsigned long number);
   VALUE   rb_cvar_get(VALUE module, ID name);
 
   /** Set module's named class variable to given value. Returns the value. @@ is optional. */
-  VALUE   rb_cvar_set(VALUE module, ID name, VALUE value, int unused);
+  VALUE   rb_cvar_set_internal(VALUE module, ID name, VALUE value);
 #define rb_cvar_set   rb_cvar_set_internal
 
   /** Set module's named class variable to given value. */
@@ -1792,6 +1794,8 @@ VALUE rb_uint2big(unsigned long number);
 
   void    rb_lastline_set(VALUE obj);
 
+  VALUE   rb_lastline_get(void);
+
 #define HAVE_RB_THREAD_BLOCKING_REGION 1
 
   /* 1.9 provides these, so we will too: */
@@ -1869,6 +1873,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Retrieve the nth match for the given MatchData */
   VALUE   rb_reg_nth_match(long nth, VALUE match_data);
+
+  /** New Enumerator. */
+  VALUE   rb_enumeratorize(VALUE obj, VALUE meth, int argc, VALUE *argv);
 
   // include an extconf.h if one is provided
 #ifdef RUBY_EXTCONF_H

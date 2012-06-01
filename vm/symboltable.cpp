@@ -12,13 +12,13 @@
 
 namespace rubinius {
 
-  SymbolTable::Kind SymbolTable::detect_kind(const char* str, int size) {
+  SymbolTable::Kind SymbolTable::detect_kind(const char* str, size_t size) {
     const char one = str[0];
 
     // A constant begins with an uppercase letter.
     if(one >= 'A' && one <= 'Z') {
       // Make sure that the rest of it is only alphanumerics
-      for(int i = 1; i < size; i++) {
+      for(size_t i = 1; i < size; i++) {
         if((isalnum(str[i]) || str[i] == '_') == false)
           return SymbolTable::Normal;
       }
@@ -96,11 +96,11 @@ namespace rubinius {
     return 0;
   }
 
-  Symbol* SymbolTable::lookup(SharedState* shared, std::string str) {
+  Symbol* SymbolTable::lookup(SharedState* shared, const std::string& str) {
     return lookup(str.data(), str.size(), shared->hash_seed);
   }
 
-  Symbol* SymbolTable::lookup(STATE, std::string str) {
+  Symbol* SymbolTable::lookup(STATE, const std::string& str) {
     return lookup(str.data(), str.size(), state->hash_seed());
   }
 
@@ -125,7 +125,7 @@ namespace rubinius {
         symbols[hash] = v;
       } else {
         SymbolIds& v = entry->second;
-        for(SymbolIds::iterator i = v.begin(); i != v.end(); ++i) {
+        for(SymbolIds::const_iterator i = v.begin(); i != v.end(); ++i) {
           std::string& s = strings[*i];
 
           if(!strncmp(s.data(), str, length)) return Symbol::from_index(*i);
@@ -191,14 +191,14 @@ namespace rubinius {
     return os.str();
   }
 
-  size_t SymbolTable::size() {
+  size_t SymbolTable::size() const {
     return strings.size();
   }
 
-  int SymbolTable::byte_size() {
-    int total = 0;
+  size_t SymbolTable::byte_size() const {
+    size_t total = 0;
 
-    for(SymbolStrings::iterator i = strings.begin();
+    for(SymbolStrings::const_iterator i = strings.begin();
         i != strings.end();
         ++i) {
       total += i->size();

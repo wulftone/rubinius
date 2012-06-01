@@ -233,6 +233,7 @@ extern "C" {
     cCApiEncCompatError,
     cCApiWaitReadable,
     cCApiWaitWritable,
+    cCApiEnumerator,
 
     // MUST be last
     cCApiMaxConstant
@@ -417,6 +418,7 @@ struct RFile {
 #define rb_cRational          (capi_get_constant(cCApiRational))
 #define rb_cComplex           (capi_get_constant(cCApiComplex))
 #define rb_cEncoding          (capi_get_constant(cCApiEncoding))
+#define rb_cEnumerator        (capi_get_constant(cCApiEnumerator))
 
 /* Global Module objects. */
 
@@ -1235,6 +1237,9 @@ VALUE rb_uint2big(unsigned long number);
   VALUE rb_num_coerce_cmp(VALUE x, VALUE y, ID func);
 #define RB_NUM_COERCE_FUNCS_NEED_OPID 1
 
+  /** Coerce x and y; perform 'x relop y' if coerce succeeds, else return Qnil. */
+  VALUE rb_num_coerce_relop(VALUE x, VALUE y, ID func);
+
   /** Call #initialize on the object with given arguments. */
   void    rb_obj_call_init(VALUE object, int arg_count, VALUE* args);
 
@@ -1668,6 +1673,8 @@ VALUE rb_uint2big(unsigned long number);
 
   void    rb_lastline_set(VALUE obj);
 
+  VALUE   rb_lastline_get(void);
+
 #define HAVE_RB_THREAD_BLOCKING_REGION 1
 
   /* 1.9 provides these, so we will too: */
@@ -1739,6 +1746,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Retrieve the nth match for the given MatchData */
   VALUE   rb_reg_nth_match(long nth, VALUE match_data);
+
+  /** New Enumerator. */
+  VALUE   rb_enumeratorize(VALUE obj, VALUE meth, int argc, VALUE *argv);
 
   // include an extconf.h if one is provided
 #ifdef RUBY_EXTCONF_H

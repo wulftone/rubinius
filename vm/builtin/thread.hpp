@@ -3,11 +3,14 @@
 
 #include "vm/exception.hpp"
 #include "vm/type_info.hpp"
+#include "vm/signal.hpp"
 
 #include "builtin/object.hpp"
 #include "builtin/randomizer.hpp"
 #include "builtin/lookuptable.hpp"
 #include "executor.hpp"
+
+#define THREAD_STACK_SIZE 4194304
 
 namespace rubinius {
 
@@ -76,6 +79,10 @@ namespace rubinius {
       return vm_;
     }
 
+    bool signal_handler_thread_p() {
+      return runner_ == handle_tramp;
+    }
+
   public:
 
     /**
@@ -112,6 +119,12 @@ namespace rubinius {
      */
     // Rubinius.primitive :thread_pass
     static Object* pass(STATE, CallFrame* calling_environment);
+
+    /**
+     *   List all live threads.
+     */
+    // Rubinius.primitive :thread_list
+    static Array* list(STATE);
 
   public:   /* Instance primitives */
 

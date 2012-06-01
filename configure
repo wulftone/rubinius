@@ -94,8 +94,8 @@ class Configure
     @x86_32       = false
     @x86_64       = false
     @fibers       = false
-    @include_dirs = ["/usr/local/include", "/opt/local/include"]
-    @lib_dirs     = ["/usr/local/lib", "/opt/local/lib"]
+    @include_dirs = []
+    @lib_dirs     = []
 
     # File system paths
     @bindir       = root + "/bin"
@@ -253,12 +253,17 @@ class Configure
 
     o.doc "\n System settings"
 
-    o.on "--with-include-dir", "PATH", "Add path the default include search paths" do |path|
-      @include_dirs << path
+    o.on "--with-include-dir", "DIR", "Add DIR to the default include search paths" do |dir|
+      @include_dirs << dir
     end
 
-    o.on "--with-lib-dir", "PATH", "Add path the default library search paths" do |path|
-      @lib_dirs << path
+    o.on "--with-lib-dir", "DIR", "Add DIR to the default library search paths" do |dir|
+      @lib_dirs << dir
+    end
+
+    o.on "--with-opt-dir", "DIR", "Add DIR/include and DIR/lib to include and library search paths" do |dir|
+      @include_dirs << "#{dir}/include"
+      @lib_dirs     << "#{dir}/lib" << "#{dir}/lib64"
     end
 
     o.on "--libc", "NAME", "Use NAME as the libc for FFI" do |name|
@@ -892,11 +897,11 @@ int main() { return tgetnum(""); }
   end
 
   def detect_include_dirs
-    @include_dirs = @include_dirs.select {|p| File.exists? p }
+    @include_dirs = @include_dirs.select {|p| File.directory? p }
   end
 
   def detect_lib_dirs
-    @lib_dirs = @lib_dirs.select {|p| File.exists? p }
+    @lib_dirs = @lib_dirs.select {|p| File.directory? p }
   end
 
   def has_struct_member(struct, member, includes = [])
@@ -1006,6 +1011,10 @@ int main() { return tgetnum(""); }
     if has_function("setproctitle", ["sys/types.h", "unistd.h"])
       @defines << "HAVE_SETPROCTITLE"
     end
+
+    if has_function("posix_fadvise", ["fcntl.h"])
+      @defines << "HAVE_POSIX_FADVISE"
+    end
   end
 
   def detect_structures
@@ -1075,6 +1084,11 @@ int main() { return tgetnum(""); }
     end
 
     @log.write ""
+
+    ["/usr/local", "/opt/local"].each do |dir|
+      @include_dirs << "#{dir}/include"
+      @lib_dirs     << "#{dir}/lib" << "#{dir}/lib64"
+    end
 
     detect_include_dirs
     detect_lib_dirs
