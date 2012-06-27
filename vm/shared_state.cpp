@@ -7,7 +7,7 @@
 #include "instruments/tooling.hpp"
 #include "instruments/timing.hpp"
 #include "global_cache.hpp"
-#include "capi/handle.hpp"
+#include "capi/handles.hpp"
 
 #include "util/thread.hpp"
 #include "inline_cache.hpp"
@@ -27,14 +27,14 @@ namespace rubinius {
 
   SharedState::SharedState(Environment* env, Configuration& config, ConfigParser& cp)
     : initialized_(false)
+    , auxiliary_threads_(0)
     , signal_handler_(0)
     , global_handles_(new capi::Handles)
-    , cached_handles_(new capi::Handles)
     , global_serial_(0)
     , world_(new WorldState)
     , ic_registry_(new InlineCacheRegistry)
     , class_count_(0)
-    , thread_ids_(0)
+    , thread_ids_(1)
     , agent_(0)
     , root_vm_(0)
     , env_(env)
@@ -49,6 +49,8 @@ namespace rubinius {
     , llvm_state(0)
   {
     ref();
+
+    auxiliary_threads_ = new AuxiliaryThreads();
 
     for(int i = 0; i < Primitives::cTotalPrimitives; i++) {
       primitive_hits_[i] = 0;
@@ -70,16 +72,17 @@ namespace rubinius {
     }
 #endif
 
-    delete tool_broker_;
-    delete world_;
-    delete ic_registry_;
-    delete om;
-    delete global_cache;
-    delete global_handles_;
-    delete cached_handles_;
     if(agent_) {
       delete agent_;
     }
+
+    delete global_handles_;
+    delete tool_broker_;
+    delete global_cache;
+    delete ic_registry_;
+    delete world_;
+    delete om;
+    delete auxiliary_threads_;
   }
 
   void SharedState::add_managed_thread(ManagedThread* thr) {
@@ -103,8 +106,7 @@ namespace rubinius {
   }
 
   uint32_t SharedState::new_thread_id() {
-    SYNC_TL;
-    return ++thread_ids_;
+    return atomic::fetch_and_add(&thread_ids_, 1);
   }
 
   VM* SharedState::new_vm() {
@@ -150,34 +152,28 @@ namespace rubinius {
     return threads;
   }
 
-  void SharedState::add_global_handle(STATE, capi::Handle* handle) {
-    SYNC(state);
-    global_handles_->add(handle);
+  capi::Handle* SharedState::add_global_handle(STATE, Object* obj) {
+    if(!obj->reference_p()) {
+      rubinius::bug("Trying to add a handle for a non reference");
+    }
+    uintptr_t handle_index = global_handles_->allocate_index(state, obj);
+    obj->set_handle_index(state, handle_index);
+    return obj->handle(state);
   }
 
   void SharedState::make_handle_cached(STATE, capi::Handle* handle) {
     SYNC(state);
-    global_handles_->move(handle, cached_handles_);
+    cached_handles_.push_back(handle);
   }
 
-
-  QueryAgent* SharedState::autostart_agent(STATE) {
+  QueryAgent* SharedState::start_agent(STATE) {
     SYNC(state);
-    if(agent_) return agent_;
-    agent_ = new QueryAgent(*this, state);
-    return agent_;
-  }
 
-  void SharedState::stop_agent(STATE) {
-    if(agent_) {
-      agent_->shutdown_i();
-      agent_ = NULL;
+    if(!agent_) {
+      agent_ = new QueryAgent(state);
     }
-  }
 
-  void SharedState::pre_exec() {
-    SYNC_TL;
-    if(agent_) agent_->cleanup();
+    return agent_;
   }
 
   void SharedState::reinit(STATE) {
@@ -199,12 +195,6 @@ namespace rubinius {
     capi_lock_.init();
 
     world_->reinit();
-
-    if(agent_) {
-      agent_->on_fork();
-      delete agent_;
-      agent_ = 0;
-    }
   }
 
   bool SharedState::should_stop() {

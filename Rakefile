@@ -33,7 +33,7 @@ end
 require config_rb
 BUILD_CONFIG = Rubinius::BUILD_CONFIG
 
-unless BUILD_CONFIG[:config_version] == 156
+unless BUILD_CONFIG[:config_version] == 157
   STDERR.puts "Your configuration is outdated, please run ./configure first"
   exit 1
 end
@@ -123,7 +123,7 @@ class SpecRunner
   def run(flags=nil)
     self.class.set_at_exit_handler
 
-    sh("bin/mspec ci #{ENV['CI_MODE_FLAG'] || flags} -d --background", &@handler)
+    sh("bin/mspec ci #{ENV['CI_MODE_FLAG'] || flags} -d --agent --background", &@handler)
   end
 end
 

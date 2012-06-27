@@ -69,7 +69,6 @@ namespace rubinius {
     , argv_(argv)
     , signature_(0)
     , version_(0)
-    , agent(0)
   {
 #ifdef ENABLE_LLVM
     if(!llvm::llvm_start_multithreaded()) {
@@ -179,10 +178,18 @@ namespace rubinius {
 
     int fd = STDERR_FILENO;
 
-    if(getenv("RBX_PAUSE_ON_CRASH")) {
+    char* pause_env = getenv("RBX_PAUSE_ON_CRASH");
+
+    if(pause_env) {
+      long timeout = strtol(pause_env, NULL, 10);
+      if(timeout <= 0) {
+        timeout = 60;
+      } else {
+        timeout *= 60;
+      }
       std::cerr << "\n========== CRASH (" << getpid();
-      std::cerr << "), pausing for 60 seconds to attach debugger\n";
-      sleep(60);
+      std::cerr << "), pausing for " << timeout << " seconds to attach debugger\n";
+      sleep(timeout);
     }
 
     // If there is a report_path setup..
@@ -229,13 +236,13 @@ namespace rubinius {
     // write info to stderr about reporting the error.
     if(fd != STDERR_FILENO) {
       close(fd);
-      safe_write(2, "\n---------------------------------------------\n");
-      safe_write(2, "CRASH: A fatal error has occurred.\n\nBacktrace:\n");
+      safe_write(STDERR_FILENO, "\n---------------------------------------------\n");
+      safe_write(STDERR_FILENO, "CRASH: A fatal error has occurred.\n\nBacktrace:\n");
       backtrace_symbols_fd(array, size, 2);
-      safe_write(2, "\n\n");
-      safe_write(2, "Wrote full error report to: ");
-      safe_write(2, report_path);
-      safe_write(2, "\nRun 'rbx report' to submit this crash report!\n");
+      safe_write(STDERR_FILENO, "\n\n");
+      safe_write(STDERR_FILENO, "Wrote full error report to: ");
+      safe_write(STDERR_FILENO, report_path);
+      safe_write(STDERR_FILENO, "\nRun 'rbx report' to submit this crash report!\n");
     }
 
     exit(100);
@@ -243,27 +250,30 @@ namespace rubinius {
 #endif
 
   static void quit_handler(int sig) {
-    static const char msg[] = "Terminated: signal ";
-    if(write(2, msg, sizeof(msg)) == 0) exit(1);
 
-    switch(sig) {
-    case SIGTERM:
-      if(write(2, "SIGTERM\n", 7) == 0) exit(1);
-      break;
+    if(getpgrp() == getpid()) {
+      static const char msg[] = "Terminated: signal ";
+      if(write(STDERR_FILENO, msg, sizeof(msg)) == 0) exit(1);
+
+      switch(sig) {
+      case SIGTERM:
+        if(write(STDERR_FILENO, "SIGTERM\n", 8) == 0) exit(1);
+        break;
 #ifndef RBX_WINDOWS
-    case SIGHUP:
-      if(write(2, "SIGHUP\n", 6) == 0) exit(1);
-      break;
-    case SIGUSR1:
-      if(write(2, "SIGUSR1\n", 7) == 0) exit(1);
-      break;
-    case SIGUSR2:
-      if(write(2, "SIGUSR2\n", 7) == 0) exit(1);
-      break;
+      case SIGHUP:
+        if(write(STDERR_FILENO, "SIGHUP\n", 7) == 0) exit(1);
+        break;
+      case SIGUSR1:
+        if(write(STDERR_FILENO, "SIGUSR1\n", 8) == 0) exit(1);
+        break;
+      case SIGUSR2:
+        if(write(STDERR_FILENO, "SIGUSR2\n", 8) == 0) exit(1);
+        break;
 #endif
-    default:
-      if(write(2, "UNKNOWN\n", 8) == 0) exit(1);
-      break;
+      default:
+        if(write(STDERR_FILENO, "UNKNOWN\n", 9) == 0) exit(1);
+        break;
+      }
     }
 
     _exit(1);
@@ -280,8 +290,6 @@ namespace rubinius {
 
     state->vm()->set_run_signals(true);
     sig_handler_ = new SignalHandler(state);
-    shared->set_signal_handler(sig_handler_);
-    sig_handler_->run(state);
 
 #ifndef RBX_WINDOWS
     // Ignore sigpipe.
@@ -569,11 +577,7 @@ namespace rubinius {
 
     NativeMethod::cleanup_thread(state);
 
-#ifdef ENABLE_LLVM
-    LLVMState::shutdown(state);
-#endif
-
-    SignalHandler::shutdown();
+    shared->auxiliary_threads()->shutdown(state);
 
     // Hold everyone.
     while(!state->stop_the_world());
@@ -609,14 +613,11 @@ namespace rubinius {
   }
 
   void Environment::start_agent(int port) {
-    agent = new QueryAgent(*shared, state);
+    QueryAgent* agent = state->shared().start_agent(state);
+
     if(config.agent_verbose) agent->set_verbose();
 
     if(!agent->bind(port)) return;
-
-    shared->set_agent(agent);
-
-    agent->run();
   }
 
   /**

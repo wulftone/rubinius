@@ -17,6 +17,7 @@ tuple.rbc
 exception.rbc
 exception18.rbc
 undefined.rbc
+hash.rbc
 hash18.rbc
 type.rbc
 type18.rbc
@@ -43,8 +44,8 @@ bytearray.rbc
 bytearray18.rbc
 channel.rbc
 executable.rbc
-static_scope.rbc
-static_scope18.rbc
+constant_scope.rbc
+constant_scope18.rbc
 hook.rbc
 codeloader.rbc
 codeloader18.rbc
@@ -97,6 +98,8 @@ random.rbc
 regexp.rbc
 regexp18.rbc
 signal.rbc
+splitter.rbc
+splitter18.rbc
 sprinter.rbc
 symbol.rbc
 symbol18.rbc

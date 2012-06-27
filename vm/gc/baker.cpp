@@ -13,7 +13,7 @@
 
 #include "gc/gc.hpp"
 
-#include "capi/handle.hpp"
+#include "capi/handles.hpp"
 #include "capi/tag.hpp"
 
 #ifdef ENABLE_LLVM
@@ -197,12 +197,11 @@ namespace rubinius {
       }
     }
 
-    for(capi::Handles::Iterator i(*data.handles()); i.more(); i.advance()) {
+    for(Allocator<capi::Handle>::Iterator i(data.handles()->allocator()); i.more(); i.advance()) {
       if(!i->in_use_p()) continue;
 
       if(!i->weak_p() && i->object()->young_object_p()) {
         i->set_object(saw_object(i->object()));
-        assert(i->object()->inflated_header_p());
 
       // Users manipulate values accessible from the data* within an
       // RData without running a write barrier. Thusly if we see a mature
@@ -212,25 +211,7 @@ namespace rubinius {
         scan_object(i->object());
       }
 
-      assert(i->object()->type_id() != InvalidType);
-    }
-
-    for(capi::Handles::Iterator i(*data.cached_handles()); i.more(); i.advance()) {
-      if(!i->in_use_p()) continue;
-
-      if(!i->weak_p() && i->object()->young_object_p()) {
-        i->set_object(saw_object(i->object()));
-        assert(i->object()->inflated_header_p());
-
-      // Users manipulate values accessible from the data* within an
-      // RData without running a write barrier. Thusly if we see a mature
-      // rdata, we must always scan it because it could contain
-      // young pointers.
-      } else if(!i->object()->young_object_p() && i->is_rdata()) {
-        scan_object(i->object());
-      }
-
-      assert(i->object()->type_id() != InvalidType);
+      assert(i->object()->type_id() > InvalidType && i->object()->type_id() < LastObjectType);
     }
 
     std::list<capi::Handle**>* gh = data.global_handle_locations();

@@ -14,6 +14,7 @@
 #include "type_info.hpp"
 #include "detection.hpp"
 #include "util/thread.hpp"
+#include "bug.hpp"
 
 namespace thread {
   class Mutex;
@@ -147,14 +148,13 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
   };
 
   enum AuxWordMeaning {
-    eAuxWordEmpty = 0,
-    eAuxWordObjID = 1,
-    eAuxWordLock =  2,
-    eAuxWordInflated = 3
+    eAuxWordEmpty  = 0,
+    eAuxWordObjID  = 1,
+    eAuxWordLock   = 2,
+    eAuxWordHandle = 3
   };
 
-  const static int AuxMeaningWidth = 2;
-  const static int AuxMeaningMask  = 3;
+  const static int InflatedMask  = 1;
   const static int cAuxLockTIDShift = 8;
   const static int cAuxLockRecCountMask = 0xff;
   const static int cAuxLockRecCountMax  = 0xff - 1;
@@ -164,6 +164,7 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
   struct ObjectFlags {
 #ifdef RBX_LITTLE_ENDIAN
     // inflated MUST be first, because rest is used as a pointer
+    unsigned int inflated        : 1;
     unsigned int meaning         : 2;
     object_type  obj_type        : 8;
     gc_zone      zone            : 2;
@@ -180,9 +181,9 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
     unsigned int Tainted         : 1;
     unsigned int Untrusted       : 1;
     unsigned int LockContended   : 1;
-    unsigned int unused          : 6;
+    unsigned int unused          : 5;
 #else
-    unsigned int unused          : 6;
+    unsigned int unused          : 5;
     unsigned int LockContended   : 1;
     unsigned int Untrusted       : 1;
     unsigned int Tainted         : 1;
@@ -200,6 +201,7 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
     object_type  obj_type        : 8;
     // inflated MUST be first, because rest is used as a pointer
     unsigned int meaning         : 2;
+    unsigned int inflated        : 1;
 #endif
 
     uint32_t aux_word;
@@ -227,7 +229,7 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
     // to the next free InflatedHeader in the InflatedHeaders free list.
     union {
       ObjectFlags flags_;
-      InflatedHeader* next_;
+      uintptr_t next_index_;
     };
 
     ObjectHeader* object_;
@@ -249,8 +251,8 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       return flags_;
     }
 
-    InflatedHeader* next() const {
-      return next_;
+    uintptr_t next() const {
+      return next_index_;
     }
 
     ObjectHeader* object() const {
@@ -265,12 +267,12 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       object_id_ = id;
     }
 
-    void set_next(InflatedHeader* next) {
-      next_ = next;
+    void set_next(uintptr_t next_index) {
+      next_index_ = next_index;
     }
 
     void clear() {
-      next_ = 0;
+      next_index_ = 0;
       object_ = 0;
       handle_ = 0;
       object_id_ = 0;
@@ -278,7 +280,7 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       owner_id_ = 0;
     }
 
-    bool used_p() const {
+    bool in_use_p() const {
       return object_ != 0;
     }
 
@@ -291,15 +293,15 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       return flags_.Marked == which;
     }
 
-    capi::Handle* handle() const {
+    capi::Handle* handle(STATE) const {
       return handle_;
     }
 
-    void set_handle(capi::Handle* handle) {
+    void set_handle(STATE, capi::Handle* handle) {
       handle_ = handle;
     }
 
-    bool update(HeaderWord header);
+    bool update(STATE, HeaderWord header);
     void initialize_mutex(int thread_id, int count);
     LockStatus lock_mutex(STATE, GCToken gct, size_t us=0);
     LockStatus lock_mutex_timed(STATE, GCToken gct, const struct timespec* ts);
@@ -342,12 +344,12 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
   public: // accessors for header members
 
     bool inflated_header_p() const {
-      return header.f.meaning == eAuxWordInflated;
+      return header.f.inflated;
     }
 
     static InflatedHeader* header_to_inflated_header(HeaderWord header) {
       uintptr_t untagged =
-        reinterpret_cast<uintptr_t>(header.all_flags) & ~AuxMeaningMask;
+        reinterpret_cast<uintptr_t>(header.all_flags) & ~InflatedMask;
       return reinterpret_cast<InflatedHeader*>(untagged);
     }
 
@@ -355,7 +357,7 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       return header_to_inflated_header(header);
     }
 
-    bool set_inflated_header(InflatedHeader* ih);
+    bool set_inflated_header(STATE, InflatedHeader* ih);
 
     InflatedHeader* deflate_header();
 
@@ -392,6 +394,20 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
     void set_obj_type(object_type type) {
       flags().obj_type = type;
     }
+
+    capi::Handle* handle(STATE);
+
+    void set_handle(STATE, capi::Handle* handle) {
+      if(inflated_header_p()) {
+        inflated_header()->set_handle(state, handle);
+      } else {
+        rubinius::bug("Setting handle directly on not inflated header");
+      }
+    }
+
+    void clear_handle(STATE);
+
+    void set_handle_index(STATE, uintptr_t handle_index);
 
   public:
 
@@ -607,10 +623,11 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       // Pull this out into a local so that we don't see any concurrent
       // changes to header.
       HeaderWord tmp = header;
+      if(tmp.f.inflated) {
+        return header_to_inflated_header(tmp)->object_id();
+      }
 
       switch(tmp.f.meaning) {
-      case eAuxWordInflated:
-        return header_to_inflated_header(tmp)->object_id();
       case eAuxWordObjID:
         return tmp.f.aux_word;
       default:

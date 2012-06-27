@@ -99,9 +99,14 @@ module Rubinius
     raise PrimitiveFailure, "Rubinius.get_user_home failed"
   end
 
-  def self.agent_io
-    Rubinius.primitive :vm_agent_io
-    raise PrimitiveFailure, "Rubinius.agent_io failed"
+  def self.agent_start
+    Rubinius.primitive :vm_agent_start
+    raise PrimitiveFailure, "Rubinius.agent_start failed"
+  end
+
+  def self.agent_loopback
+    Rubinius.primitive :vm_agent_loopback
+    raise PrimitiveFailure, "Rubinius.agent_loopback failed"
   end
 
   def self.lock(obj)

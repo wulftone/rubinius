@@ -11,6 +11,7 @@
 
 #include "stats.hpp"
 
+#include "auxiliary_threads.hpp"
 #include "globals.hpp"
 #include "symboltable.hpp"
 
@@ -58,10 +59,11 @@ namespace rubinius {
   class SharedState : public RefCount, public Lockable {
   private:
     bool initialized_;
+    AuxiliaryThreads* auxiliary_threads_;
     SignalHandler* signal_handler_;
 
     capi::Handles* global_handles_;
-    capi::Handles* cached_handles_;
+    std::list<capi::Handle*> cached_handles_;
     std::list<capi::Handle**> global_handle_locations_;
 
     int global_serial_;
@@ -116,6 +118,10 @@ namespace rubinius {
       initialized_ = true;
     }
 
+    AuxiliaryThreads* auxiliary_threads() {
+      return auxiliary_threads_;
+    }
+
     SignalHandler* signal_handler() {
       return signal_handler_;
     }
@@ -141,11 +147,11 @@ namespace rubinius {
       return global_handles_;
     }
 
-    void add_global_handle(State*, capi::Handle* handle);
+    capi::Handle* add_global_handle(State*, Object* obj);
     void make_handle_cached(State*, capi::Handle* handle);
 
-    capi::Handles* cached_handles() {
-      return cached_handles_;
+    std::list<capi::Handle*>* cached_handles() {
+      return &cached_handles_;
     }
 
     std::list<capi::Handle**>* global_handle_locations() {
@@ -214,13 +220,7 @@ namespace rubinius {
       return agent_;
     }
 
-    void set_agent(QueryAgent* agent) {
-      agent_ = agent;
-    }
-
-    QueryAgent* autostart_agent(STATE);
-
-    void stop_agent(STATE);
+    QueryAgent* start_agent(STATE);
 
     Environment* env() {
       return env_;
@@ -256,7 +256,6 @@ namespace rubinius {
 
     void scheduler_loop();
 
-    void pre_exec();
     void reinit(STATE);
 
     bool should_stop();

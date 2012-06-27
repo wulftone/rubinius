@@ -1,5 +1,4 @@
 require 'rakelib/rubinius'
-require 'rakelib/build'
 require 'rakelib/instruction_parser'
 require 'rakelib/generator_task'
 
@@ -87,7 +86,7 @@ field_extract_headers = %w[
   vm/builtin/packed_object.hpp
   vm/builtin/randomizer.hpp
   vm/builtin/regexp.hpp
-  vm/builtin/staticscope.hpp
+  vm/builtin/constantscope.hpp
   vm/builtin/encoding.hpp
   vm/builtin/string.hpp
   vm/builtin/symbol.hpp
@@ -123,6 +122,10 @@ namespace :build do
       unless File.file?("vendor/llvm/Release/bin/llvm-config")
         ENV["REQUIRES_RTTI"] = "1"
         Dir.chdir "vendor/llvm" do
+          host = Rubinius::BUILD_CONFIG[:host]
+          llvm_config_flags = "--build=#{host} --host=#{host} " \
+                              "--enable-optimized --disable-assertions "\
+                              " --enable-targets=host,cpp"
           sh %[sh -c "#{expand("./configure")} #{llvm_config_flags}"]
           sh make
         end
@@ -143,7 +146,8 @@ namespace :build do
   namespace :ffi do
 
     FFI_PREPROCESSABLES = %w[ lib/fcntl.rb
-                              lib/zlib.rb
+                              lib/18/zlib.rb
+                              lib/19/zlib.rb
                             ]
 
     unless BUILD_CONFIG[:windows]

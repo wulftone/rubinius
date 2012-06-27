@@ -23,7 +23,7 @@ module Rubinius
       @early_option_stop = false
       @check_syntax = false
 
-      @enable_gems = Rubinius.ruby19?
+      @enable_gems = !Rubinius.ruby18?
       @load_gemfile = false
 
       version = RUBY_VERSION.split(".").first(2).join(".")
@@ -45,6 +45,9 @@ module Rubinius
       @stage = "running Loader preamble"
 
       Object.const_set :ENV, EnvironmentVariables.new
+
+      # Set the default visibility for the top level binding
+      TOPLEVEL_BINDING.variables.method_visibility = :private
 
       # set terminal width
       width = 80
@@ -270,7 +273,7 @@ containing the Rubinius standard library files.
         $DEBUG = true
       end
 
-      if Rubinius.ruby19?
+      unless Rubinius.ruby18?
         options.on "--disable-gems", "Do not automatically load rubygems on startup" do
           @enable_gems = false
         end
@@ -559,17 +562,6 @@ to rebuild the compiler.
       end
     end
 
-    def agent
-      @stage = "starting agent ruby thread"
-
-      # Fixing a bug on OSX 10.5
-      return
-
-      if Rubinius::Config['agent.start']
-        Rubinius::AgentRegistry.spawn_thread
-      end
-    end
-
     def rubygems
       @stage = "loading Rubygems"
 
@@ -836,7 +828,6 @@ to rebuild the compiler.
           options
           load_paths
           debugger
-          agent
           rubygems
           gemfile
           requires

@@ -73,11 +73,11 @@ class Configure
     @llvm_asset_path        = "http://asset.rubini.us/prebuilt"
     @llvm_source_build      = false
 
+    check_tool_version @cc, '-dumpversion', [4, 1]
+    check_tool_version @cxx, '-dumpversion', [4, 1]
+    check_tool_version 'bison', '--version', [2, 3]
 
     if @host == "i686-pc-linux-gnu" || @host == "x86_64-unknown-linux-gnu"
-      check_tool_version @cc, '-dumpversion', [4, 1]
-      check_tool_version 'bison', '--version', [2, 3]
-
       @gcc_major = `#{@cc} -dumpversion`.strip.split(".")[0,2].join(".")
       @llvm_generic_prebuilt  = "llvm-#{@llvm_version}-#{@host}-#{@gcc_major}.tar.bz2"
     else
@@ -118,13 +118,12 @@ class Configure
     # Library configuration
     @rb_readline = false
     @vendor_zlib = false
-    @libyaml = false
 
     # Essential settings (modify these for creating releases)
     @libversion = "2.0"
     @version = "#{@libversion}.0dev"
     @release_date = "yyyy-mm-dd"
-    @config_version = 156
+    @config_version = 157
 
     # TODO: add conditionals for platforms
     if RbConfig::CONFIG["build_os"] =~ /darwin/
@@ -495,6 +494,7 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
 
     if File.exists?(@llvm_include_path)
       @llvm = :svn
+      @llvm_configure = llvm_config_cmd "#{@llvm_default}/Release/bin/llvm-config"
       return true
     else
       @log.write "  Code doesn't appear to be proper LLVM tree!"
@@ -576,6 +576,7 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
         end
         @log.write "done!"
         @llvm = :prebuilt
+        @llvm_configure = llvm_config_cmd "#{dir}/Release/bin/llvm-config"
         return true
       end
     end
@@ -591,8 +592,9 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
         sub = File.join(@llvm_path, which, "bin")
         if File.directory? sub
           @log.write "Ok! Using #{which}"
-          @llvm_configure = File.join(@llvm_path, which, "bin", "llvm-config")
+          config = File.join(@llvm_path, which, "bin", "llvm-config")
           @llvm = :config
+          @llvm_configure = llvm_config_cmd config
           return true
         end
       end
@@ -617,10 +619,13 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
   def setup_auto
     @log.print "  Checking for existing LLVM library tree: "
     if File.directory?("#{@llvm_default}/Release")
-      version = `#{@perl} #{@llvm_default}/Release/bin/llvm-config --version`.strip
-      if version == "3.0"
+      config = llvm_config_cmd "#{@llvm_default}/Release/bin/llvm-config"
+      version = `#{config} --version`.strip
+      parts = version.sub(/svn$/, "").split(".").map { |i| i.to_i }
+      api_version = ("%d%02d" % parts[0..1]).to_i
+      if version >= "3.0"
         # See if this has rtti turned off and reject it.
-        if `#{@perl} #{@llvm_default}/Release/bin/llvm-config --cxxflags`.index("-fno-rtti")
+        if `#{config} --cxxflags`.index("-fno-rtti")
           @log.write "incorrectly configure (rtti is off)"
           remove_default
         else
@@ -630,7 +635,9 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
           else
             @llvm = :prebuilt
           end
-
+          @llvm_version     = version
+          @llvm_api_version = api_version
+          @llvm_configure   = config
           return
         end
       else
@@ -672,17 +679,17 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
     end
 
     if config
-      version = `#{@perl} #{config} --version`.strip
+      version = `#{llvm_config_cmd config} --version`.strip
       parts = version.sub(/svn$/, "").split(".").map { |i| i.to_i }
       api_version = ("%d%02d" % parts[0..1]).to_i
-      if `#{@perl} #{config} --cxxflags`.index("-fno-rtti")
+      if `#{llvm_config_cmd config} --cxxflags`.index("-fno-rtti")
         @log.write "incorrectly configured llvm (rtti is off)"
-      elsif api_version != 300
-        @log.write "only LLVM 3.0 is supported"
+      elsif api_version < 300
+        @log.write "only LLVM 3.x is supported"
       else
         @log.write "found! (version #{version} - api: #{api_version})"
-        @llvm_configure = config
         @llvm = :config
+        @llvm_configure = llvm_config_cmd config
         @llvm_api_version = api_version
         return true
       end
@@ -696,6 +703,12 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
   def c_includes
     @include_dirs.map do |d|
       "-I#{d}"
+    end.join(" ")
+  end
+
+  def c_libs
+    @lib_dirs.map do |d|
+      "-L#{d}"
     end.join(" ")
   end
 
@@ -727,9 +740,13 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
         yield f
       end
 
+      File.open source, "rb" do |f|
+        @log.log f.read
+      end
+
       libs = (default_link_libs + link_libs).map { |l| "-l#{l}" }.join(" ")
 
-      cmd = "#{@cxx} #{env('CFLAGS')} -lstdc++ #{libs} -o #{basename} #{source} >>#{@log.path} 2>&1"
+      cmd = "#{@cxx} #{env('CFLAGS')} -o #{basename} #{source} #{c_includes} #{c_libs} -lstdc++ #{libs} >>#{@log.path} 2>&1"
       @log.log cmd
       system cmd
       return $?.exitstatus unless run
@@ -896,6 +913,31 @@ int main() { return tgetnum(""); }
     @log.write @curses ? @curses : "not found"
   end
 
+  def detect_zlib_crc_table_size
+    @log.print "Checking zlib crc_table size: "
+
+    status = check_program(true, ['z']) do |f|
+      src = <<-EOP
+#include <zlib.h>
+
+int main() {
+#ifdef z_crc_t
+  return sizeof(z_crc_t);
+#else
+  return sizeof(get_crc_table()[0]);
+#endif
+}
+      EOP
+      f.puts src
+      @log.log src
+    end
+
+    @zlib_crc_table_size = status
+    @log.write "#{@zlib_crc_table_size}"
+  end
+
+
+
   def detect_include_dirs
     @include_dirs = @include_dirs.select {|p| File.directory? p }
   end
@@ -939,6 +981,21 @@ int main() { return tgetnum(""); }
     end
   end
 
+  def has_library(name, function, libraries, includes=[])
+    @log.print "Checking for library: #{name}: "
+
+    status = check_program true, libraries do |src|
+      includes.each do |i|
+        src.puts "#include <#{i}>"
+      end
+      src.puts "int main() { void* ptr = (void*)(&#{function}); return 0; }"
+    end
+
+    success = status == 0
+    @log.write(success ? "found!" : "not found!")
+    success
+  end
+
   def compile_check(logpart, &block)
     @log.print "Checking for #{logpart}: "
 
@@ -954,7 +1011,7 @@ int main() { return tgetnum(""); }
 
     @log.log string
 
-    cmd = "#{@cxx} -S -o - -x c #{c_includes} #{env('CFLAGS')} #{file.path} >>#{@log.path} 2>&1"
+    cmd = "#{@cxx} -S -o - -x c #{c_includes} #{c_libs} #{env('CFLAGS')} #{file.path} >>#{@log.path} 2>&1"
     @log.log cmd
     system cmd
 
@@ -990,16 +1047,29 @@ int main() { return tgetnum(""); }
      @fibers = true if @x86_32 or @x86_64
    end
 
-    @vendor_zlib = true if @features["vendor-zlib"]
-
+    if @features["vendor-zlib"]
+      @vendor_zlib = true
+      # Our vendored zlib uses long as the crc_table type
+      # If we update vendored zlib in the future, we have to
+      # review this and make sure we update it properly to
+      # match the newer version which like will have uint32_t
+      # as the type.
+      @zlib_crc_table_size = sizeof("long")
+      @include_dirs << "#{@vendordir}/zlib"
+      @lib_dirs     << "#{@vendordir}/zlib"
+    end
     @defines << "HAVE_SPT_REUSEARGV" if @linux || @darwin || @bsd
   end
 
-  def detect_functions
-    if has_function("yaml_parser_initialize", ["yaml.h"])
-      @libyaml = true
+  def detect_libraries
+    if @version_list.include? "19" or @version_list.include? "20"
+      unless has_library("libyaml", "yaml_parser_initialize", ["yaml"], ["yaml.h"])
+        failure "libyaml is required for 1.9 and above"
+      end
     end
+  end
 
+  def detect_functions
     if has_function("clock_gettime", ["time.h"])
       @defines << "HAVE_CLOCK_GETTIME"
     end
@@ -1106,10 +1176,12 @@ int main() { return tgetnum(""); }
 
     detect_libc_name
 
+    detect_zlib_crc_table_size
     detect_endian
     detect_tr1_hash
     detect_x86
     detect_features
+    detect_libraries
     detect_functions
     detect_structures
     detect_globals
@@ -1135,6 +1207,20 @@ int main() { return tgetnum(""); }
       @build_ruby = File.join(RbConfig::CONFIG['bindir'], bin)
     end
     @build_ruby
+  end
+
+  # Checks whether the given config file is a Perl script by checking its first
+  # line for a Perl hashbang.
+  def llvm_config_cmd(config)
+    first_line = File.open(config).lines.first
+    if first_line =~ /^#! ?\/usr(\/local)?\/bin\/(env )?perl/
+      "#{@perl} #{config}"
+    else
+      config
+    end
+  rescue Errno::ENOENT, ArgumentError
+    # The file doesn't exist (ENOENT) or it's a binary file (ArgumentError).
+    config
   end
 
   def get_system_name
@@ -1258,7 +1344,6 @@ module Rubinius
     :default_version => "#{@default_version}",
     :vendor_zlib    => #{@vendor_zlib},
     :readline       => :#{@rb_readline ? :rb_readline : :c_readline},
-    :libyaml        => #{@libyaml}
   }
 end
       EOC
@@ -1301,6 +1386,8 @@ end
       else
         f.puts %[#define RBX_ZLIB_PATH        ""]
       end
+
+      f.puts %[#define RBX_ZLIB_CRC_TABLE_SIZE #{@zlib_crc_table_size}]
 
       @supported_versions.each do |ver|
         f.puts "#define RBX_DEFAULT_#{ver}       #{ver == @default_version}"

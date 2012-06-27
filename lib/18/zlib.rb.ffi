@@ -1185,26 +1185,24 @@ module Zlib
           extra.nil? or extra.length != length + 2
       end
 
-      if flags & Zlib::GzipFile::FLAG_ORIG_NAME ==
-           Zlib::GzipFile::FLAG_ORIG_NAME then
-        @orig_name = ''
+      if flags & Zlib::GzipFile::FLAG_ORIG_NAME == Zlib::GzipFile::FLAG_ORIG_NAME
+        @orig_name = ""
 
         c = @io.getc
 
-        until c == 0 do
-          @orig_name << c.chr
+        until c == ?0
+          @orig_name << c
           c = @io.getc
         end
       end
 
-      if flags & Zlib::GzipFile::FLAG_COMMENT ==
-           Zlib::GzipFile::FLAG_COMMENT then
-        @comment = ''
+      if flags & Zlib::GzipFile::FLAG_COMMENT == Zlib::GzipFile::FLAG_COMMENT
+        @comment = ""
 
         c = @io.getc
 
-        until c == 0 do
-          @comment << c.chr
+        until c == ?0
+          @comment << c
           c = @io.getc
         end
       end
@@ -1575,9 +1573,8 @@ module Zlib
   # Returns the table for calculating CRC checksum as an array.
 
   def self.crc_table
-    get_crc_table_c.read_array_of_long(256).map do |x|
-      x >= 0 ? x : 2 ** 32 + x # HACK convert back to unsigned
-    end
+    type = FFI.size_to_type(Rubinius::ZLIB_CRC_TABLE_SIZE)
+    get_crc_table_c.send(:"read_array_of_u#{type}", 256)
   end
 
   ##

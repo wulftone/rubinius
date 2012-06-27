@@ -132,6 +132,9 @@ namespace rubinius {
 
   class ObjectMemory : public gc::WriteBarrier, public Lockable {
 
+    thread::SpinLock allocation_lock_;
+    thread::SpinLock inflation_lock_;
+
     /// BakerGC used for the young generation
     BakerGC* young_;
 
@@ -330,7 +333,7 @@ namespace rubinius {
     void memstats();
 
     void validate_handles(capi::Handles* handles);
-    void prune_handles(capi::Handles* handles, bool check_forwards);
+    void prune_handles(capi::Handles* handles, std::list<capi::Handle*>* cached, BakerGC* young);
 
     ObjectPosition validate_object(Object* obj);
     bool valid_young_object_p(Object* obj);
@@ -362,6 +365,7 @@ namespace rubinius {
 
     InflatedHeader* inflate_header(STATE, ObjectHeader* obj);
     void inflate_for_id(STATE, ObjectHeader* obj, uint32_t id);
+    void inflate_for_handle(STATE, ObjectHeader* obj, capi::Handle* handle);
 
     void in_finalizer_thread(STATE);
     void start_finalizer_thread(STATE);
