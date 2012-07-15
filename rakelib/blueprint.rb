@@ -8,8 +8,15 @@ Daedalus.blueprint do |i|
   # To use same build flags across platforms, it is added explicitly.
   gcc.cflags << "-pipe -Wall -fno-omit-frame-pointer"
 
+  # Due to a Clang bug (http://llvm.org/bugs/show_bug.cgi?id=9825),
+  # -mno-omit-leaf-frame-pointer is needed for Clang on Linux.
+  # On other combinations of platform and compiler, this flag is implicitly
+  # assumed from -fno-omit-frame-pointer. To use same build flags across
+  # platforms, -mno-omit-leaf-frame-pointer is added explicitly.
+  gcc.cflags << "-mno-omit-leaf-frame-pointer"
+
   gcc.cflags << "-Wno-unused-function"
-  gcc.cflags << "-g -ggdb3 -Werror"
+  gcc.cflags << "-g -Werror"
   gcc.cflags << "-DRBX_PROFILER"
   gcc.cflags << "-D__STDC_LIMIT_MACROS -D__STDC_CONSTANT_MACROS"
   gcc.cflags << "-D_LARGEFILE_SOURCE"
@@ -18,7 +25,7 @@ Daedalus.blueprint do |i|
   gcc.cflags << Rubinius::BUILD_CONFIG[:user_cflags]
 
   if ENV['DEV']
-    gcc.cflags << "-O0"
+    gcc.cflags << "-O0 -ggdb3"
     gcc.mtime_only = true
   else
     gcc.cflags << "-O2"

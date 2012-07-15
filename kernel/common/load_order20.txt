@@ -5,7 +5,6 @@ binding.rbc
 proc.rbc
 proc19.rbc
 autoload.rbc
-autoload19.rbc
 module.rbc
 module19.rbc
 enumerable19.rbc
@@ -109,6 +108,7 @@ signal.rbc
 splitter.rbc
 splitter19.rbc
 sprinter.rbc
+sprinter19.rbc
 symbol.rbc
 symbol19.rbc
 thread.rbc

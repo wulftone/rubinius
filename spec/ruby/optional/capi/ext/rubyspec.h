@@ -199,6 +199,7 @@
 #define HAVE_RB_ENC_TO_INDEX               1
 #define HAVE_RB_OBJ_ENCODING               1
 
+#define HAVE_RB_STR_NEW_CSTR               1
 #define HAVE_RB_USASCII_STR_NEW            1
 #define HAVE_RB_USASCII_STR_NEW_CSTR       1
 #define HAVE_RB_EXTERNAL_STR_NEW           1
@@ -234,6 +235,10 @@
 
 /* File */
 #define HAVE_RB_FILE_OPEN                  1
+#ifdef RUBY_VERSION_IS_1_9
+#define HAVE_RB_FILE_OPEN_STR              1
+#define HAVE_FILEPATHVALUE                 1
+#endif
 
 /* Float */
 #define HAVE_RB_FLOAT_NEW                  1
@@ -429,10 +434,10 @@
 #define HAVE_RB_STR_FLUSH                  1
 #define HAVE_RB_STR_FREEZE                 1
 #define HAVE_RB_STR_HASH                   1
+#define HAVE_RB_STR_INSPECT                1
 #define HAVE_RB_STR_INTERN                 1
 #define HAVE_RB_STR_LEN                    1
 #define HAVE_RB_STR_NEW                    1
-#define HAVE_RB_STR_NEW_CSTR               1
 #define HAVE_RB_STR_NEW2                   1
 #define HAVE_RB_STR_NEW3                   1
 #define HAVE_RB_STR_NEW4                   1
@@ -442,6 +447,9 @@
 #define HAVE_RB_STR_RESIZE                 1
 #define HAVE_RB_STR_SET_LEN                1
 #define HAVE_RB_STR_SPLIT                  1
+#ifdef RUBY_VERSION_IS_1_9
+#define HAVE_RB_STR_SUBSEQ                 1
+#endif
 #define HAVE_RB_STR_SUBSTR                 1
 #define HAVE_RB_STR_TO_STR                 1
 #define HAVE_RSTRING                       1

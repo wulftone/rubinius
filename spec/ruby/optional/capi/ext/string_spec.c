@@ -131,6 +131,12 @@ VALUE string_spec_rb_str_freeze(VALUE self, VALUE str) {
 }
 #endif
 
+#ifdef HAVE_RB_STR_INSPECT
+VALUE string_spec_rb_str_inspect(VALUE self, VALUE str) {
+  return rb_str_inspect(str);
+}
+#endif
+
 #ifdef HAVE_RB_STR_INTERN
 VALUE string_spec_rb_str_intern(VALUE self, VALUE str) {
   return rb_str_intern(str);
@@ -298,6 +304,12 @@ VALUE string_spec_rb_str_resize_RSTRING_LEN(VALUE self, VALUE str, VALUE size) {
 #ifdef HAVE_RB_STR_SPLIT
 VALUE string_spec_rb_str_split(VALUE self, VALUE str) {
   return rb_str_split(str, ",");
+}
+#endif
+
+#ifdef HAVE_RB_STR_SUBSEQ
+VALUE string_spec_rb_str_subseq(VALUE self, VALUE str, VALUE beg, VALUE len) {
+  return rb_str_subseq(str, FIX2INT(beg), FIX2INT(len));
 }
 #endif
 
@@ -511,6 +523,10 @@ void Init_string_spec() {
   rb_define_method(cls, "rb_str_freeze", string_spec_rb_str_freeze, 1);
 #endif
 
+#ifdef HAVE_RB_STR_INSPECT
+  rb_define_method(cls, "rb_str_inspect", string_spec_rb_str_inspect, 1);
+#endif
+
 #ifdef HAVE_RB_STR_INTERN
   rb_define_method(cls, "rb_str_intern", string_spec_rb_str_intern, 1);
 #endif
@@ -587,6 +603,10 @@ void Init_string_spec() {
 
 #ifdef HAVE_RB_STR_SPLIT
   rb_define_method(cls, "rb_str_split", string_spec_rb_str_split, 1);
+#endif
+
+#ifdef HAVE_RB_STR_SUBSEQ
+  rb_define_method(cls, "rb_str_subseq", string_spec_rb_str_subseq, 3);
 #endif
 
 #ifdef HAVE_RB_STR_SUBSTR

@@ -289,6 +289,15 @@ describe "C-API String function" do
     end
   end
 
+  ruby_version_is "1.9" do
+    describe "rb_str_subseq" do
+      it "returns a byte-indexed substring" do
+        str = encode("\x00\x01\x02\x03\x04", "binary")
+        @s.rb_str_subseq(str, 1, 2).should == encode("\x01\x02", "binary")
+      end
+    end
+  end
+
   describe "rb_str_substr" do
     it "returns a substring" do
       "hello".length.times do |time|
@@ -429,6 +438,12 @@ describe "C-API String function" do
       str.size.should == 12
       @s.RSTRING_LEN(str).should == 12
       str[0, 4].should == "test"
+    end
+  end
+
+  describe "rb_str_inspect" do
+    it "returns the equivalent of calling #inspect on the String" do
+      @s.rb_str_inspect("value").should == %["value"]
     end
   end
 

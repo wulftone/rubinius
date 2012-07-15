@@ -245,6 +245,10 @@ extern "C" {
     return env->get_handle(string->string_dup(env->state()));
   }
 
+  VALUE rb_str_inspect(VALUE self) {
+    return rb_funcall(self, rb_intern("inspect"), 0);
+  }
+
   VALUE rb_str_intern(VALUE self) {
     return rb_funcall(self, rb_intern("to_sym"), 0);
   }
@@ -309,6 +313,11 @@ extern "C" {
 
   VALUE rb_str_split(VALUE self, const char* separator) {
     return rb_funcall(self, rb_intern("split"), 1, rb_str_new2(separator));
+  }
+
+  VALUE rb_str_subseq(VALUE self, size_t starting_index, size_t length) {
+    return rb_funcall(self, rb_intern("byteslice"), 2,
+                      LONG2NUM(starting_index), LONG2NUM(length) );
   }
 
   VALUE rb_str_substr(VALUE self, size_t starting_index, size_t length) {
@@ -426,6 +435,14 @@ extern "C" {
     RString* rstr = Handle::from(self)->as_rstring(env, RSTRING_CACHE_SAFE);
 
     return rstr->ptr;
+  }
+
+  char* rb_str_ptr_readonly_end(VALUE self) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    RString* rstr = Handle::from(self)->as_rstring(env, RSTRING_CACHE_SAFE);
+
+    return rstr->ptr + rstr->len;
   }
 
   long rb_str_len(VALUE self) {

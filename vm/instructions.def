@@ -471,7 +471,9 @@ end
 instruction raise_exc() [ value -- ] => raise
   flush_ip();
   Object* t1 = stack_pop();
-  state->raise_exception(as<Exception>(t1));
+  Exception* exc = as<Exception>(t1);
+  exc->locations(state, Location::from_call_stack(state, call_frame));
+  state->raise_exception(exc);
   RUN_EXCEPTION();
 end
 
@@ -748,7 +750,7 @@ instruction push_const(literal) [ -- constant ]
     res = Helpers::const_missing(state, sym, call_frame);
   } else if(Autoload* autoload = try_as<Autoload>(res)) {
     flush_ip();
-    res = autoload->resolve(state, call_frame);
+    res = autoload->resolve(state, gct, call_frame);
   }
 
   CHECK_AND_PUSH(res);
@@ -803,7 +805,7 @@ instruction find_const(index) [ module -- constant ]
     res = Helpers::const_missing_under(state, under, sym, call_frame);
   } else if(Autoload* autoload = try_as<Autoload>(res)) {
     flush_ip();
-    res = autoload->resolve(state, call_frame);
+    res = autoload->resolve(state, gct, call_frame, under);
   }
 
   CHECK_AND_PUSH(res);
@@ -851,9 +853,10 @@ instruction push_const_fast(literal association) [ -- constant ]
     res = Helpers::const_get(state, call_frame, sym, &found);
 
     if(found) {
+      OnStack<2> os(state, cache, res);
       if(Autoload* autoload = try_as<Autoload>(res)) {
         flush_ip();
-        res = autoload->resolve(state, call_frame);
+        res = autoload->resolve(state, gct, call_frame);
       }
 
       if(res) {

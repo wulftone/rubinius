@@ -454,14 +454,17 @@ namespace rubinius {
           prc->bound_method(state, func);
           args->set(state, i, prc);
         } else {
-          args->set(state, i, Pointer::create(state,cNil));
+          args->set(state, i, cNil);
         }
         break;
       }
       case RBX_FFI_TYPE_PTR: {
         void* ptr = *(void**)parameters[i];
-        args->set(state, i, Pointer::create(state,
-              ptr ? Pointer::create(state, ptr) : cNil));
+        if(ptr) {
+          args->set(state, i, Pointer::create(state, ptr));
+        } else {
+          args->set(state, i, cNil);
+        }
         break;
       }
       case RBX_FFI_TYPE_STRING: {
@@ -503,7 +506,7 @@ namespace rubinius {
     }
 
     Object* obj = stub->callable->send(state, env->current_call_frame(),
-                                       state->symbol("call"), args);
+                                       G(sym_call), args);
 
     // Ug. An exception is being raised...
     if(!obj) {

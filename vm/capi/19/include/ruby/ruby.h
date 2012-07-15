@@ -190,7 +190,7 @@ typedef void (*RUBY_DATA_FUNC)(void*);
 
 #ifndef RBX_WINDOWS
   extern int __X_rubinius_version __attribute__((weak));
-  int __X_rubinius_version = 1;
+  int __X_rubinius_version = 2;
 #endif
 
   /**
@@ -652,8 +652,10 @@ VALUE rb_uint2big(unsigned long number);
 /** The pointer to the string str's data. */
 #ifdef RUBY_READONLY_STRING
 #define RSTRING_PTR(str)  rb_str_ptr_readonly(str)
+#define RSTRING_END(str)  rb_str_ptr_readonly_end(str)
 #else
 #define RSTRING_PTR(str)  (RSTRING(str)->ptr)
+#define RSTRING_END(str)  (RSTRING(str)->ptr + RSTRING(str)->len)
 #endif
 
 /** The pointer to the data. */
@@ -678,6 +680,8 @@ VALUE rb_uint2big(unsigned long number);
 #define STR2CSTR(str)         rb_str2cstr((VALUE)(str), 0)
 
 #define Check_SafeStr(x)
+
+#define FilePathValue(v)      rb_file_path_value(&(v))
 
 /** Retrieve the ID given a Symbol handle. */
 #define SYM2ID(sym)       (sym)
@@ -1204,6 +1208,12 @@ VALUE rb_uint2big(unsigned long number);
   /** Returns a File opened with the specified mode. */
   VALUE rb_file_open(const char* name, const char* mode);
 
+  /** Returns a File opened with the specified mode. */
+  VALUE rb_file_open_str(VALUE name, const char* mode);
+
+  /** Calls #to_path or #to_str to convert an object to a String. */
+  VALUE rb_file_path_value(volatile VALUE* obj);
+
   /**
    *  Call method on receiver, args as varargs. Calls private methods.
    */
@@ -1222,6 +1232,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Return name of the function being called */
   ID rb_frame_last_func();
+
+  /** Return name of the current Ruby method */
+  ID rb_frame_this_func();
 
   VALUE rb_exec_recursive(VALUE (*func)(VALUE, VALUE, int),
                           VALUE obj, VALUE arg);
@@ -1310,8 +1323,9 @@ VALUE rb_uint2big(unsigned long number);
   void    rb_gc();
 
   /** Mark variable global. Will not be GC'd. */
-  void    rb_global_variable(VALUE* handle_address);
-  void    rb_gc_register_address(VALUE* address);
+#define rb_global_variable(address)   capi_gc_register_address(address, __FILE__, __LINE__)
+#define rb_gc_register_address(address)   capi_gc_register_address(address, __FILE__, __LINE__)
+  void    capi_gc_register_address(VALUE* address, const char* file, int line);
 
   /** Unmark variable as global */
   void    rb_gc_unregister_address(VALUE* address);
@@ -1535,7 +1549,8 @@ VALUE rb_uint2big(unsigned long number);
    *  no parameters that were not consumed by required or optional.
    *  Lastly, the block may be nil.
    */
-  int     rb_scan_args(int argc, const VALUE* argv, const char* spec, ...);
+  int     rb_scan_args_19(int argc, const VALUE* argv, const char* spec, ...);
+#define rb_scan_args    rb_scan_args_19
 
   /** Raise error if $SAFE is not higher than the given level. */
   void    rb_secure(int level);
@@ -1605,6 +1620,8 @@ VALUE rb_uint2big(unsigned long number);
   char* rb_str_ptr_readonly(VALUE self);
 #define HAVE_RB_STR_PTR_READONLY 1
 
+  char* rb_str_ptr_readonly_end(VALUE self);
+
   /** Appends other String to self and returns the modified self. */
   VALUE   rb_str_append(VALUE self, VALUE other);
 
@@ -1639,6 +1656,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** As Ruby's String#dup, returns copy of self as a new String. */
   VALUE   rb_str_dup(VALUE self);
+
+  /** Returns an escaped String. */
+  VALUE   rb_str_inspect(VALUE self);
 
   /** Returns a symbol created from this string. */
   VALUE   rb_str_intern(VALUE self);
@@ -1688,6 +1708,8 @@ VALUE rb_uint2big(unsigned long number);
 
   /** Splits self using the separator string. Returns Array of substrings. */
   VALUE   rb_str_split(VALUE self, const char* separator);
+
+  VALUE   rb_str_subseq(VALUE self, size_t starting_index, size_t length);
 
   /**
    *  As Ruby's String#slice.
@@ -1876,6 +1898,12 @@ VALUE rb_uint2big(unsigned long number);
 
   /** New Enumerator. */
   VALUE   rb_enumeratorize(VALUE obj, VALUE meth, int argc, VALUE *argv);
+
+#define RETURN_ENUMERATOR(obj, argc, argv) do {				\
+	if (!rb_block_given_p())					\
+	    return rb_enumeratorize((obj), ID2SYM(rb_frame_this_func()),\
+				    (argc), (argv));			\
+    } while (0)
 
   // include an extconf.h if one is provided
 #ifdef RUBY_EXTCONF_H

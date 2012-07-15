@@ -25,7 +25,9 @@
 
 namespace rubinius {
   namespace capi {
+    class Handle;
     class Handles;
+    class GlobalHandle;
   }
 
   namespace tooling {
@@ -64,7 +66,7 @@ namespace rubinius {
 
     capi::Handles* global_handles_;
     std::list<capi::Handle*> cached_handles_;
-    std::list<capi::Handle**> global_handle_locations_;
+    std::list<capi::GlobalHandle*> global_handle_locations_;
 
     int global_serial_;
     WorldState* world_;
@@ -83,11 +85,11 @@ namespace rubinius {
     Environment* env_;
     tooling::ToolBroker* tool_broker_;
 
-    thread::Mutex onig_lock_;
+    utilities::thread::Mutex onig_lock_;
 
     // This lock is to implement Thread.critical. It is not critical as
     // the name would make it sound.
-    thread::Mutex ruby_critical_lock_;
+    utilities::thread::Mutex ruby_critical_lock_;
     pthread_t ruby_critical_thread_;
     bool ruby_critical_set_;
 
@@ -154,17 +156,12 @@ namespace rubinius {
       return &cached_handles_;
     }
 
-    std::list<capi::Handle**>* global_handle_locations() {
+    std::list<capi::GlobalHandle*>* global_handle_locations() {
       return &global_handle_locations_;
     }
 
-    void add_global_handle_location(capi::Handle** loc) {
-      global_handle_locations_.push_back(loc);
-    }
-
-    void del_global_handle_location(capi::Handle** loc) {
-      global_handle_locations_.remove(loc);
-    }
+    void add_global_handle_location(capi::Handle** loc, const char* file, int line);
+    void del_global_handle_location(capi::Handle** loc);
 
     int global_serial() {
       return global_serial_;
@@ -226,7 +223,7 @@ namespace rubinius {
       return env_;
     }
 
-    thread::Mutex& onig_lock() {
+    utilities::thread::Mutex& onig_lock() {
       return onig_lock_;
     }
 

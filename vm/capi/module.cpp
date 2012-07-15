@@ -8,6 +8,7 @@
 #include "helpers.hpp"
 #include "call_frame.hpp"
 #include "exception_point.hpp"
+#include "on_stack.hpp"
 
 #include "capi/capi.hpp"
 #include "capi/18/include/ruby.h"
@@ -43,6 +44,14 @@ extern "C" {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
     CallFrame* rcf = env->current_call_frame()->previous->top_ruby_frame();
+
+    return env->get_handle(rcf->name());
+  }
+
+  ID rb_frame_this_func() {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    CallFrame* rcf = env->current_call_frame()->top_ruby_frame();
 
     return env->get_handle(rcf->name());
   }
@@ -201,13 +210,19 @@ extern "C" {
 
   /** @note   Shares code with rb_define_class_under, change there too. --rue */
   VALUE rb_define_module_under(VALUE parent_handle, const char* name) {
+
+    GCTokenImpl gct;
+
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
     Module* parent = c_as<Module>(env->get_object(parent_handle));
     Symbol* constant = env->state()->symbol(name);
 
     LEAVE_CAPI(env->state());
-    Module* module = rubinius::Helpers::open_module(env->state(),
+
+    OnStack<2> os(env->state(), parent, constant);
+
+    Module* module = rubinius::Helpers::open_module(env->state(), gct,
         env->current_call_frame(), parent, constant);
 
     // The call above could have triggered an Autoload resolve, which may

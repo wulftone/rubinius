@@ -152,7 +152,7 @@ extern "C" {
 
 #ifndef RBX_WINDOWS
   extern int __X_rubinius_version __attribute__((weak));
-  int __X_rubinius_version = 1;
+  int __X_rubinius_version = 2;
 #endif
 
   /**
@@ -1114,6 +1114,9 @@ VALUE rb_uint2big(unsigned long number);
   /** Return name of the function being called */
   ID rb_frame_last_func();
 
+  /** Return name of the current Ruby method */
+  ID rb_frame_this_func();
+
   VALUE rb_exec_recursive(VALUE (*func)(VALUE, VALUE, int),
                           VALUE obj, VALUE arg);
 
@@ -1204,8 +1207,9 @@ VALUE rb_uint2big(unsigned long number);
   void    rb_gc();
 
   /** Mark variable global. Will not be GC'd. */
-  void    rb_global_variable(VALUE* handle_address);
-  void    rb_gc_register_address(VALUE* address);
+#define rb_global_variable(address)   capi_gc_register_address(address, __FILE__, __LINE__)
+#define rb_gc_register_address(address)   capi_gc_register_address(address, __FILE__, __LINE__)
+  void    capi_gc_register_address(VALUE* address, const char* file, int line);
 
   /** Unmark variable as global */
   void    rb_gc_unregister_address(VALUE* address);
@@ -1429,7 +1433,8 @@ VALUE rb_uint2big(unsigned long number);
    *  no parameters that were not consumed by required or optional.
    *  Lastly, the block may be nil.
    */
-  int     rb_scan_args(int argc, const VALUE* argv, const char* spec, ...);
+  int     rb_scan_args_18(int argc, const VALUE* argv, const char* spec, ...);
+#define rb_scan_args    rb_scan_args_18
 
   /** Raise error if $SAFE is not higher than the given level. */
   void    rb_secure(int level);
@@ -1527,6 +1532,9 @@ VALUE rb_uint2big(unsigned long number);
 
   /** As Ruby's String#dup, returns copy of self as a new String. */
   VALUE   rb_str_dup(VALUE self);
+
+  /** Returns an escaped String. */
+  VALUE   rb_str_inspect(VALUE self);
 
   /** Returns a symbol created from this string. */
   VALUE   rb_str_intern(VALUE self);
@@ -1749,6 +1757,12 @@ VALUE rb_uint2big(unsigned long number);
 
   /** New Enumerator. */
   VALUE   rb_enumeratorize(VALUE obj, VALUE meth, int argc, VALUE *argv);
+
+#define RETURN_ENUMERATOR(obj, argc, argv) do {				\
+	if (!rb_block_given_p())					\
+	    return rb_enumeratorize((obj), ID2SYM(rb_frame_this_func()),\
+				    (argc), (argv));			\
+    } while (0)
 
   // include an extconf.h if one is provided
 #ifdef RUBY_EXTCONF_H

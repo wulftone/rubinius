@@ -166,6 +166,23 @@ namespace rubinius {
     cached_handles_.push_back(handle);
   }
 
+  void SharedState::add_global_handle_location(capi::Handle** loc, const char* file, int line) {
+    capi::GlobalHandle* global_handle = new capi::GlobalHandle(loc, file, line);
+    global_handle_locations_.push_back(global_handle);
+  }
+
+  void SharedState::del_global_handle_location(capi::Handle** loc) {
+    for(std::list<capi::GlobalHandle*>::iterator i = global_handle_locations_.begin();
+        i != global_handle_locations_.end(); ++i) {
+      if((*i)->handle() == loc) {
+        global_handle_locations_.erase(i);
+        delete *i;
+        return;
+      }
+    }
+    rubinius::bug("Removing handle not in the list");
+  }
+
   QueryAgent* SharedState::start_agent(STATE) {
     SYNC(state);
 
@@ -182,7 +199,7 @@ namespace rubinius {
 
     config.jit_inline_debug.set("no");
 
-    env_->state = state;
+    env_->set_root_vm(state->vm());
     threads_.clear();
     threads_.push_back(state->vm());
 
