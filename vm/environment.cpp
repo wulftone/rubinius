@@ -1,4 +1,5 @@
 #include "config.h"
+#include "signature.h"
 #include "prelude.hpp"
 #include "environment.hpp"
 #include "config_parser.hpp"
@@ -52,9 +53,19 @@
 #endif
 #include <fcntl.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <sys/param.h>
+#include <sys/stat.h>
 
 #include "missing/setproctitle.h"
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
+#ifdef __FreeBSD__
+#include <sys/sysctl.h>
+#endif
 
 namespace rubinius {
 
@@ -448,6 +459,8 @@ namespace rubinius {
         strncpy(report_path, config.report_path, sizeof(report_path) - 1);
       }
     }
+
+    state->shared().set_use_capi_lock(config.capi_lock);
   }
 
   void Environment::load_directory(std::string dir) {
@@ -642,21 +655,6 @@ namespace rubinius {
       throw std::runtime_error(error);
     }
 
-    // Pull in the signature file; this helps control when .rbc files need to
-    // be discarded and recompiled due to changes to the compiler since the
-    // .rbc files were created.
-    std::string sig_path = root + "/signature";
-    std::ifstream sig_stream(sig_path.c_str());
-    if(sig_stream) {
-      sig_stream >> signature_;
-      G(rubinius)->set_const(state, "Signature",
-                       Integer::from(state, signature_));
-      sig_stream.close();
-    } else {
-      std::string error = "Unable to load compiler signature file: " + sig_path;
-      throw std::runtime_error(error);
-    }
-
     version_ = as<Fixnum>(G(rubinius)->get_const(
           state, state->symbol("RUBY_LIB_VERSION")))->to_native();
 
@@ -714,19 +712,145 @@ namespace rubinius {
     }
   }
 
+  std::string Environment::executable_name() {
+    char name[PATH_MAX];
+
+#ifdef __APPLE__
+    uint32_t size = PATH_MAX;
+    if(_NSGetExecutablePath(name, &size) == 0) {
+      return name;
+    } else if(realpath(argv_[0], name)) {
+      return name;
+    }
+#elif defined(__FreeBSD__)
+    size_t size = PATH_MAX;
+    int oid[4];
+
+    oid[0] = CTL_KERN;
+    oid[1] = KERN_PROC;
+    oid[2] = KERN_PROC_PATHNAME;
+    oid[3] = getpid();
+
+    if(sysctl(oid, 4, name, &size, 0, 0) == 0) {
+      return name;
+    } else if(realpath(argv_[0], name)) {
+      return name;
+    }
+#elif defined(__linux__)
+    {
+      if(readlink("/proc/self/exe", name, PATH_MAX) >= 0) {
+        return name;
+      } else if(realpath(argv_[0], name)) {
+        return name;
+      }
+    }
+#else
+    if(realpath(argv_[0], name)) {
+      return name;
+    }
+#endif
+
+    return argv_[0];
+  }
+
+  bool Environment::load_signature(std::string runtime) {
+    std::string path = runtime;
+
+    // TODO: Fix this
+    if(LANGUAGE_20_ENABLED(state)) {
+      path += "/20";
+    } else if(LANGUAGE_19_ENABLED(state)) {
+      path += "/19";
+    } else {
+      path += "/18";
+    }
+
+    path += "/signature";
+
+    std::ifstream signature(path.c_str());
+    if(signature) {
+      signature >> signature_;
+
+      if(signature_ != RBX_SIGNATURE) return false;
+
+      signature.close();
+
+      return true;
+    }
+
+    /*
+    } else {
+      std::string error = "Unable to load compiler signature file: " + sig_path;
+      throw std::runtime_error(error);
+     */
+    return false;
+  }
+
+  bool Environment::verify_paths(std::string prefix) {
+    struct stat st;
+
+    std::string dir = prefix + RBX_RUNTIME_PATH;
+    if(stat(dir.c_str(), &st) == -1 || !S_ISDIR(st.st_mode)) return false;
+
+    if(!load_signature(dir)) return false;
+
+    dir = prefix + RBX_BIN_PATH;
+    if(stat(dir.c_str(), &st) == -1 || !S_ISDIR(st.st_mode)) return false;
+
+    dir = prefix + RBX_KERNEL_PATH;
+    if(stat(dir.c_str(), &st) == -1 || !S_ISDIR(st.st_mode)) return false;
+
+    dir = prefix + RBX_LIB_PATH;
+    if(stat(dir.c_str(), &st) == -1 || !S_ISDIR(st.st_mode)) return false;
+
+    return true;
+  }
+
+  std::string Environment::system_prefix() {
+    if(!system_prefix_.empty()) return system_prefix_;
+
+    // 1. Check if our configure prefix is overridden by the environment.
+    const char* path = getenv("RBX_PREFIX_PATH");
+    if(path && verify_paths(path)) {
+      system_prefix_ = path;
+      return path;
+    }
+
+    // 2. Check if our configure prefix is valid.
+    path = RBX_PREFIX_PATH;
+    if(verify_paths(path)) {
+      system_prefix_ = path;
+      return path;
+    }
+
+    // 3. Check if we can derive paths from the executable name.
+    // TODO: For Windows, substitute '/' for '\\'
+    std::string name = executable_name();
+    size_t exe = name.rfind('/');
+
+    if(exe != std::string::npos) {
+      std::string prefix = name.substr(0, exe - strlen(RBX_BIN_PATH));
+      if(verify_paths(prefix)) {
+        system_prefix_ = prefix;
+        return prefix;
+      }
+    }
+
+    throw MissingRuntime("FATAL ERROR: unable to find Rubinius runtime directories.");
+  }
+
   /**
-   * Runs rbx from the filesystem, loading the Ruby kernel files relative to
-   * the supplied root directory.
-   *
-   * @param root The path to the Rubinius /runtime directory, which contains
-   * the loader.rbc and kernel files.
+   * Runs rbx from the filesystem. Searches for the Rubinius runtime files
+   * according to the algorithm in find_runtime().
    */
-  void Environment::run_from_filesystem(std::string root) {
+  void Environment::run_from_filesystem() {
     int i = 0;
     state->vm()->set_root_stack(reinterpret_cast<uintptr_t>(&i),
                                 VM::cStackDepthMax);
 
-    load_platform_conf(root);
+    std::string runtime = system_prefix() + RBX_RUNTIME_PATH;
+
+    load_platform_conf(runtime);
     load_vm_options(argc_, argv_);
     boot_vm();
     load_argv(argc_, argv_);
@@ -735,19 +859,22 @@ namespace rubinius {
 
     load_tool();
 
-    if(LANGUAGE_20_ENABLED(state)) {
-      root += "/20";
-    } else if(LANGUAGE_19_ENABLED(state)) {
-      root += "/19";
-    } else {
-      root += "/18";
-    }
-    G(rubinius)->set_const(state, "RUNTIME_PATH", String::create(state, root.c_str(), root.size()));
+    G(rubinius)->set_const(state, "Signature", Integer::from(state, signature_));
 
-    load_kernel(root);
+    if(LANGUAGE_20_ENABLED(state)) {
+      runtime += "/20";
+    } else if(LANGUAGE_19_ENABLED(state)) {
+      runtime += "/19";
+    } else {
+      runtime += "/18";
+    }
+    G(rubinius)->set_const(state, "RUNTIME_PATH", String::create(state,
+                           runtime.c_str(), runtime.size()));
+
+    load_kernel(runtime);
 
     start_signals();
-    run_file(root + "/loader.rbc");
+    run_file(runtime + "/loader.rbc");
 
     state->vm()->thread_state()->clear();
 

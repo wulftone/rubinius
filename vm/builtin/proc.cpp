@@ -11,6 +11,7 @@
 #include "builtin/nativefunction.hpp"
 
 #include "arguments.hpp"
+#include "on_stack.hpp"
 
 #include "vmmethod.hpp"
 #include "arguments.hpp"
@@ -49,14 +50,16 @@ namespace rubinius {
     bool lambda_style = CBOOL(lambda_);
     int flags = 0;
 
+    Proc* self = this;
+    OnStack<1> os(state, self);
     // Check the arity in lambda mode
     if(lambda_style && !block_->nil_p()) {
       flags = CallFrame::cIsLambda;
-      int total = block_->code()->total_args()->to_native();
-      int required = block_->code()->required_args()->to_native();
+      int total = self->block_->code()->total_args()->to_native();
+      int required = self->block_->code()->required_args()->to_native();
 
       bool arity_ok = false;
-      if(Fixnum* fix = try_as<Fixnum>(block_->code()->splat())) {
+      if(Fixnum* fix = try_as<Fixnum>(self->block_->code()->splat())) {
         switch(fix->to_native()) {
         case -2:
           arity_ok = true;
@@ -112,31 +115,44 @@ namespace rubinius {
       }
     }
 
-    Object* ret;
-    if(bound_method_->nil_p()) {
-      ret = block_->call(state, call_frame, args, flags);
-    } else if(NativeMethod* nm = try_as<NativeMethod>(bound_method_)) {
-      ret = nm->execute(state, call_frame, nm, G(object), args);
-    } else if(NativeFunction* nf = try_as<NativeFunction>(bound_method_)) {
-      ret = nf->call(state, args, call_frame);
+    if(self->bound_method_->nil_p()) {
+      if(self->block_->nil_p()) {
+        Exception* exc =
+          Exception::make_type_error(state, BlockEnvironment::type, self->block_, "No code bound to proc");
+        exc->locations(state, Location::from_call_stack(state, call_frame));
+        state->raise_exception(exc);
+        return NULL;
+      } else {
+        return self->block_->call(state, call_frame, args, flags);
+      }
+    } else if(NativeMethod* nm = try_as<NativeMethod>(self->bound_method_)) {
+      return nm->execute(state, call_frame, nm, G(object), args);
+    } else if(NativeFunction* nf = try_as<NativeFunction>(self->bound_method_)) {
+      return nf->call(state, args, call_frame);
     } else {
       Dispatch dis(state->symbol("__yield__"));
-      ret = dis.send(state, call_frame, args);
+      return dis.send(state, call_frame, args);
     }
-
-    return ret;
   }
 
   Object* Proc::yield(STATE, CallFrame* call_frame, Arguments& args) {
     if(bound_method_->nil_p()) {
-      // NOTE! To match MRI semantics, this explicitely ignores lambda_.
-      return block_->call(state, call_frame, args, 0);
+      if(block_->nil_p()) {
+        Exception* exc =
+          Exception::make_type_error(state, BlockEnvironment::type, block_, "No code bound to proc");
+        exc->locations(state, Location::from_call_stack(state, call_frame));
+        state->raise_exception(exc);
+        return NULL;
+      } else {
+        // NOTE! To match MRI semantics, this explicitely ignores lambda_.
+        return block_->call(state, call_frame, args, 0);
+      }
     } else if(NativeMethod* nm = try_as<NativeMethod>(bound_method_)) {
       return nm->execute(state, call_frame, nm, G(object), args);
     } else if(NativeFunction* nf = try_as<NativeFunction>(bound_method_)) {
       return nf->call(state, args, call_frame);
     } else {
-      return call_prim(state, call_frame, NULL, NULL, args);
+      return call(state, call_frame, args);
     }
   }
 

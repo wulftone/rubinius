@@ -47,6 +47,7 @@ TYPE_GEN    = %w[ vm/gen/includes.hpp
 
 GENERATED = %W[ vm/gen/revision.h
                 vm/gen/config_variables.h
+                vm/gen/signature.h
                 #{encoding_database}
                 #{transcoders_database}
               ] + TYPE_GEN + INSN_GEN
@@ -137,9 +138,16 @@ namespace :build do
   task :build => %W[
                      build:llvm
                      #{VM_EXE}
-                     kernel:build
                      build:ffi:preprocessor
-                     build:zlib
+                     compiler:generate
+                     stage:bin
+                     stage:capi_include
+                     stage:lib
+                     stage:tooling
+                     stage:kernel
+                     kernel:build
+                     stage:runtime
+                     stage:documentation
                      extensions
                    ]
 
@@ -159,18 +167,6 @@ namespace :build do
 
     FFI::FileProcessor::Task.new FFI_PREPROCESSABLES
 
-  end
-
-  if Rubinius::BUILD_CONFIG[:vendor_zlib]
-    directory 'lib/zlib'
-
-    task :zlib => ['lib/zlib', VM_EXE] do
-      FileList["vendor/zlib/libz.*"].each do |lib|
-        cp lib, 'lib/zlib/'
-      end
-    end
-  else
-    task :zlib
   end
 end
 
@@ -368,9 +364,15 @@ namespace :vm do
       'vm/test/runner.cpp',
       'vm/test/runner.o',
       VM_EXE,
+      'bin/rbx',
+      'bin/ruby',
+      'bin/rake',
+      'bin/ri',
+      'bin/rdoc',
+      'bin/irb',
+      'bin/gem',
       'vm/.deps',
-      'lib/zlib/*',
-      'lib/zlib'
+      'staging'
     ].exclude("vm/gen/config.h")
 
     files.each do |filename|

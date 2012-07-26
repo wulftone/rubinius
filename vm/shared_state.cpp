@@ -166,12 +166,17 @@ namespace rubinius {
     cached_handles_.push_back(handle);
   }
 
-  void SharedState::add_global_handle_location(capi::Handle** loc, const char* file, int line) {
+  void SharedState::add_global_handle_location(capi::Handle** loc,
+                                               const char* file, int line)
+  {
+    SYNC_TL;
     capi::GlobalHandle* global_handle = new capi::GlobalHandle(loc, file, line);
     global_handle_locations_.push_back(global_handle);
   }
 
   void SharedState::del_global_handle_location(capi::Handle** loc) {
+    SYNC_TL;
+
     for(std::list<capi::GlobalHandle*>::iterator i = global_handle_locations_.begin();
         i != global_handle_locations_.end(); ++i) {
       if((*i)->handle() == loc) {
@@ -280,10 +285,14 @@ namespace rubinius {
   }
 
   void SharedState::enter_capi(STATE, const char* file, int line) {
-    capi_lock_.lock(state->vm(), file, line);
+    if(use_capi_lock_) {
+      capi_lock_.lock(state->vm(), file, line);
+    }
   }
 
   void SharedState::leave_capi(STATE) {
-    capi_lock_.unlock(state->vm());
+    if(use_capi_lock_) {
+      capi_lock_.unlock(state->vm());
+    }
   }
 }
