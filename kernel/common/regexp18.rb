@@ -42,6 +42,23 @@ class Regexp
     Regexp.last_match = search_region(str, 0, str.bytesize, true)
   end
 
+  # Returns the index of the first character in the region that
+  # matched or nil if there was no match. See #match for returning
+  # the MatchData instead.
+  def =~(str)
+    # unless str.nil? because it's nil and only nil, not false.
+    str = StringValue(str) unless str.nil?
+
+    match = match_from(str, 0)
+    if match
+      Regexp.last_match = match
+      return match.begin(0)
+    else
+      Regexp.last_match = nil
+      return nil
+    end
+  end
+
   def ===(other)
     unless other.kind_of?(String)
       other = Rubinius::Type.check_convert_type other, String, :to_str
@@ -159,6 +176,24 @@ class Regexp
 end
 
 class MatchData
+
+  def begin(idx)
+    return @full.at(0) if idx == 0
+    return @region.at(idx - 1).at(0)
+  end
+
+  def end(idx)
+    return @full.at(1) if idx == 0
+    @region.at(idx - 1).at(1)
+  end
+
+  def offset(idx)
+    out = []
+    out << self.begin(idx)
+    out << self.end(idx)
+    return out
+  end
+
   def [](idx, len = nil)
     return to_a[idx, len] if len
 

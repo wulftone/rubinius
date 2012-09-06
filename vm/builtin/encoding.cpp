@@ -53,6 +53,9 @@ namespace rubinius {
     enc->set_const(state, "EncodingMap", LookupTable::create(state));
     enc->set_const(state, "EncodingList", Array::create(state, 3));
 
+    G(encoding)->set_ivar(state, state->symbol("@default_external"), G(undefined));
+    G(encoding)->set_ivar(state, state->symbol("@default_internal"), G(undefined));
+
     Encoding* ascii = create_bootstrap(state, "US-ASCII", eAscii, ONIG_ENCODING_US_ASCII);
     Encoding* binary = create_bootstrap(state, "ASCII-8BIT", eBinary, ONIG_ENCODING_ASCII);
     Encoding* utf8 = create_bootstrap(state, "UTF-8", eUtf8, ONIG_ENCODING_UTF_8);
@@ -205,11 +208,23 @@ namespace rubinius {
   }
 
   Encoding* Encoding::default_external(STATE) {
-    return Encoding::find(state, "external");
+    Symbol* default_external = state->symbol("default_external");
+    Encoding* enc = as<Encoding>(G(encoding)->get_ivar(state, default_external));
+    if(enc == G(undefined)) {
+      enc = Encoding::find(state, "external");
+      G(encoding)->set_ivar(state, default_external, enc);
+    }
+    return enc;
   }
 
   Encoding* Encoding::default_internal(STATE) {
-    return Encoding::find(state, "internal");
+    Symbol* default_internal = state->symbol("default_internal");
+    Encoding* enc = as<Encoding>(G(encoding)->get_ivar(state, default_internal));
+    if(enc == G(undefined)) {
+      enc = Encoding::find(state, "internal");
+      G(encoding)->set_ivar(state, default_internal, enc);
+    }
+    return enc;
   }
 
   Encoding* Encoding::get_object_encoding(STATE, Object* obj) {
@@ -373,6 +388,10 @@ namespace rubinius {
     return as<Class>(G(encoding)->get_const(state, state->symbol("Transcoding")));
   }
 
+  Class* Encoding::converter_class(STATE) {
+    return as<Class>(G(encoding)->get_const(state, state->symbol("Converter")));
+  }
+
   LookupTable* Encoding::encoding_map(STATE) {
     return as<LookupTable>(internal_class(state)->get_const(
               state, state->symbol("EncodingMap")));
@@ -532,59 +551,53 @@ namespace rubinius {
     table->store(state, encoding_symbol(state, tr->dst_encoding), t);
   }
 
-#define CONVERTER_ERROR_HANDLER_MASK                0x000000ff
-
-#define CONVERTER_INVALID_MASK                      0x0000000f
-#define CONVERTER_INVALID_REPLACE                   0x00000002
-
-#define CONVERTER_UNDEF_MASK                        0x000000f0
-#define CONVERTER_UNDEF_REPLACE                     0x00000020
-#define CONVERTER_UNDEF_HEX_CHARREF                 0x00000030
-
-#define CONVERTER_DECORATOR_MASK                    0x0000ff00
-#define CONVERTER_NEWLINE_DECORATOR_MASK            0x00003f00
-#define CONVERTER_NEWLINE_DECORATOR_READ_MASK       0x00000f00
-#define CONVERTER_NEWLINE_DECORATOR_WRITE_MASK      0x00003000
-
-#define CONVERTER_UNIVERSAL_NEWLINE_DECORATOR       0x00000100
-#define CONVERTER_CRLF_NEWLINE_DECORATOR            0x00001000
-#define CONVERTER_CR_NEWLINE_DECORATOR              0x00002000
-#define CONVERTER_XML_TEXT_DECORATOR                0x00004000
-#define CONVERTER_XML_ATTR_CONTENT_DECORATOR        0x00008000
-
-#define CONVERTER_STATEFUL_DECORATOR_MASK           0x00f00000
-#define CONVERTER_XML_ATTR_QUOTE_DECORATOR          0x00100000
-
-#if defined(_WIN32)
-#define CONVERTER_DEFAULT_NEWLINE_DECORATOR CONVERTER_CRLF_NEWLINE_DECORATOR
-#else
-#define CONVERTER_DEFAULT_NEWLINE_DECORATOR 0
-#endif
-
-#define CONVERTER_PARTIAL_INPUT                     0x00010000
-#define CONVERTER_AFTER_OUTPUT                      0x00020000
-
   void Converter::init(STATE) {
     Class* cls = ontology::new_class_under(state, "Converter", G(encoding));
 
-    cls->set_const(state, "INVALID_MASK", Fixnum::from(CONVERTER_INVALID_MASK));
-    cls->set_const(state, "INVALID_REPLACE", Fixnum::from(CONVERTER_INVALID_REPLACE));
-    cls->set_const(state, "UNDEF_MASK", Fixnum::from(CONVERTER_UNDEF_MASK));
-    cls->set_const(state, "UNDEF_REPLACE", Fixnum::from(CONVERTER_UNDEF_REPLACE));
-    cls->set_const(state, "UNDEF_HEX_CHARREF", Fixnum::from(CONVERTER_UNDEF_HEX_CHARREF));
-    cls->set_const(state, "PARTIAL_INPUT", Fixnum::from(CONVERTER_PARTIAL_INPUT));
-    cls->set_const(state, "AFTER_OUTPUT", Fixnum::from(CONVERTER_AFTER_OUTPUT));
+    cls->set_const(state, "INVALID_MASK", Fixnum::from(ECONV_INVALID_MASK));
+    cls->set_const(state, "INVALID_REPLACE", Fixnum::from(ECONV_INVALID_REPLACE));
+    cls->set_const(state, "UNDEF_MASK", Fixnum::from(ECONV_UNDEF_MASK));
+    cls->set_const(state, "UNDEF_REPLACE", Fixnum::from(ECONV_UNDEF_REPLACE));
+    cls->set_const(state, "UNDEF_HEX_CHARREF", Fixnum::from(ECONV_UNDEF_HEX_CHARREF));
+    cls->set_const(state, "PARTIAL_INPUT", Fixnum::from(ECONV_PARTIAL_INPUT));
+    cls->set_const(state, "AFTER_OUTPUT", Fixnum::from(ECONV_AFTER_OUTPUT));
     cls->set_const(state, "UNIVERSAL_NEWLINE_DECORATOR",
-                   Fixnum::from(CONVERTER_UNIVERSAL_NEWLINE_DECORATOR));
+                   Fixnum::from(ECONV_UNIVERSAL_NEWLINE_DECORATOR));
     cls->set_const(state, "CRLF_NEWLINE_DECORATOR",
-                   Fixnum::from(CONVERTER_CRLF_NEWLINE_DECORATOR));
+                   Fixnum::from(ECONV_CRLF_NEWLINE_DECORATOR));
     cls->set_const(state, "CR_NEWLINE_DECORATOR",
-                   Fixnum::from(CONVERTER_CR_NEWLINE_DECORATOR));
+                   Fixnum::from(ECONV_CR_NEWLINE_DECORATOR));
     cls->set_const(state, "XML_TEXT_DECORATOR",
-                   Fixnum::from(CONVERTER_XML_TEXT_DECORATOR));
+                   Fixnum::from(ECONV_XML_TEXT_DECORATOR));
     cls->set_const(state, "XML_ATTR_CONTENT_DECORATOR",
-                   Fixnum::from(CONVERTER_XML_ATTR_CONTENT_DECORATOR));
+                   Fixnum::from(ECONV_XML_ATTR_CONTENT_DECORATOR));
     cls->set_const(state, "XML_ATTR_QUOTE_DECORATOR",
-                   Fixnum::from(CONVERTER_XML_ATTR_QUOTE_DECORATOR));
+                   Fixnum::from(ECONV_XML_ATTR_QUOTE_DECORATOR));
+  }
+
+  Converter* Converter::allocate(STATE, Object* self) {
+    Class* cls = Encoding::converter_class(state);
+    Converter* c = state->new_object<Converter>(cls);
+
+    c->klass(state, as<Class>(self));
+
+    return c;
+  }
+
+  Symbol* Converter::primitive_convert(STATE, String* source, String* target,
+                                       Object* offset, Object* size, Fixnum* options) {
+    return nil<Symbol>();
+  }
+
+  String* Converter::finish(STATE) {
+    return nil<String>();
+  }
+
+  Exception* Converter::last_error(STATE) {
+    return nil<Exception>();
+  }
+
+  String* Converter::putback(STATE, Object* maxbytes) {
+    return nil<String>();
   }
 }

@@ -11,7 +11,7 @@ namespace rubinius {
   class Fixnum;
   class String;
   class BlockEnvironment;
-  class CompiledMethod;
+  class CompiledCode;
   class ConstantScope;
   class IO;
 
@@ -81,6 +81,27 @@ namespace rubinius {
      */
     // Rubinius.primitive :vm_gc_start
     static Object*  vm_gc_start(STATE, GCToken gct, Object* force, CallFrame* calling_environment);
+
+    /**
+     *  Retrieve the number of garbage collections
+     *
+     */
+    // Rubinius.primitive :vm_gc_count
+    static Integer*  vm_gc_count(STATE);
+
+    /**
+     *  Retrieve the amount of memory allocated by the gc
+     *
+     */
+    // Rubinius.primitive :vm_gc_size
+    static Integer*  vm_gc_size(STATE);
+
+    /**
+     *  Retrieve the total time spent garbage collecting
+     *
+     */
+    // Rubinius.primitive :vm_gc_time
+    static Integer*  vm_gc_time(STATE);
 
     /**
      *  Retrieve a value from VM configuration.
@@ -191,10 +212,10 @@ namespace rubinius {
     static Tuple* vm_find_public_method(STATE, Object* recv, Symbol* name);
 
     // Rubinius.primitive :vm_add_method
-    static Object* vm_add_method(STATE, GCToken gct, Symbol* name, CompiledMethod* meth, ConstantScope* scope, Object* vis);
+    static Object* vm_add_method(STATE, GCToken gct, Symbol* name, CompiledCode* meth, ConstantScope* scope, Object* vis);
 
     // Rubinius.primitive :vm_attach_method
-    static Object* vm_attach_method(STATE, GCToken gct, Symbol* name, CompiledMethod* meth, ConstantScope* scope, Object* recv);
+    static Object* vm_attach_method(STATE, GCToken gct, Symbol* name, CompiledCode* meth, ConstantScope* scope, Object* recv);
 
     // A robust way to get the class of an object, since Object#class can be redefined.
     // Rubinius.primitive :vm_object_class
@@ -345,7 +366,7 @@ namespace rubinius {
     static Tuple* vm_thread_state(STATE);
 
     // Rubinius.primitive :vm_run_script
-    static Object* vm_run_script(STATE, GCToken gct, CompiledMethod* cm, CallFrame* calling_environment);
+    static Object* vm_run_script(STATE, GCToken gct, CompiledCode* code, CallFrame* calling_environment);
 
     // Rubinius.primitive :vm_hash_trie_item_index
     static Fixnum* vm_hash_trie_item_index(STATE, Fixnum* hash, Fixnum* level, Integer* map);

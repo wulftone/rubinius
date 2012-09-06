@@ -50,6 +50,26 @@ VALUE kernel_spec_rb_ensure(VALUE self, VALUE main_proc, VALUE arg,
 }
 #endif
 
+#ifdef HAVE_RB_CATCH
+VALUE kernel_spec_call_proc_with_catch(VALUE arg, VALUE data) {
+  return rb_funcall(data, rb_intern("call"), 0);
+}
+
+VALUE kernel_spec_rb_catch(VALUE self, VALUE sym, VALUE main_proc) {
+  return rb_catch(StringValuePtr(sym), kernel_spec_call_proc_with_catch, main_proc);
+}
+#endif
+
+#ifdef HAVE_RB_CATCH_OBJ
+VALUE kernel_spec_call_proc_with_catch_obj(VALUE arg, VALUE data) {
+  return rb_funcall(data, rb_intern("call"), 0);
+}
+
+VALUE kernel_spec_rb_catch_obj(VALUE self, VALUE obj, VALUE main_proc) {
+  return rb_catch_obj(obj, kernel_spec_call_proc_with_catch, main_proc);
+}
+#endif
+
 #ifdef HAVE_RB_EVAL_STRING
 VALUE kernel_spec_rb_eval_string(VALUE self, VALUE str) {
   return rb_eval_string(RSTRING_PTR(str));
@@ -68,6 +88,13 @@ VALUE kernel_spec_rb_raise(VALUE self, VALUE hash) {
 #ifdef HAVE_RB_THROW
 VALUE kernel_spec_rb_throw(VALUE self, VALUE result) {
   rb_throw("foo", result);
+  return ID2SYM(rb_intern("rb_throw_failed"));
+}
+#endif
+
+#ifdef HAVE_RB_THROW_OBJ
+VALUE kernel_spec_rb_throw_obj(VALUE self, VALUE obj, VALUE result) {
+  rb_throw_obj(obj, result);
   return ID2SYM(rb_intern("rb_throw_failed"));
 }
 #endif
@@ -224,12 +251,24 @@ void Init_kernel_spec() {
   rb_define_method(cls, "rb_throw", kernel_spec_rb_throw, 1);
 #endif
 
+#ifdef HAVE_RB_THROW_OBJ
+  rb_define_method(cls, "rb_throw_obj", kernel_spec_rb_throw_obj, 2);
+#endif
+
 #ifdef HAVE_RB_RESCUE
   rb_define_method(cls, "rb_rescue", kernel_spec_rb_rescue, 4);
 #endif
 
 #ifdef HAVE_RB_RESCUE2
   rb_define_method(cls, "rb_rescue2", kernel_spec_rb_rescue2, -1);
+#endif
+
+#ifdef HAVE_RB_CATCH
+  rb_define_method(cls, "rb_catch", kernel_spec_rb_catch, 2);
+#endif
+
+#ifdef HAVE_RB_CATCH_OBJ
+  rb_define_method(cls, "rb_catch_obj", kernel_spec_rb_catch_obj, 2);
 #endif
 
 #ifdef HAVE_RB_SYS_FAIL

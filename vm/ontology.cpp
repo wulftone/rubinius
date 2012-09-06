@@ -10,7 +10,7 @@
 #include "builtin/bytearray.hpp"
 #include "builtin/class.hpp"
 #include "builtin/compactlookuptable.hpp"
-#include "builtin/compiledmethod.hpp"
+#include "builtin/compiledcode.hpp"
 #include "builtin/channel.hpp"
 #include "builtin/data.hpp"
 #include "builtin/dir.hpp"
@@ -297,7 +297,7 @@ namespace rubinius {
     Encoding::init(state);
     kcode::init(state);
     Executable::init(state);
-    CompiledMethod::init(state);
+    CompiledCode::init(state);
     IO::init(state);
     BlockEnvironment::init(state);
     ConstantScope::init(state);
@@ -348,6 +348,9 @@ namespace rubinius {
      * classes.
      */
 
+    Object* undef = new_object<Object>(G(object));
+    GO(undefined).set(undef);
+
     /*
      * Create our Rubinius module that we hang stuff off
      */
@@ -365,9 +368,6 @@ namespace rubinius {
     Object* main = new_object<Object>(G(object));
     GO(main).set(main);
     G(object)->set_const(state, "MAIN", main); // HACK test hooking up MAIN
-
-    Object* undef = new_object<Object>(G(object));
-    GO(undefined).set(undef);
 
     GO(vm_class).set(ontology::new_class_under(state, "VM", G(rubinius)));
 

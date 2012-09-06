@@ -84,7 +84,7 @@ module Rubinius
     executable.serial = 1
     if executable.respond_to? :scope=
       # If we're adding a method inside ane eval, dup it so that
-      # we don't share the CompiledMethod with the eval, since
+      # we don't share the CompiledCode with the eval, since
       # we're going to mutate it.
       if constant_scope and script = constant_scope.current_script
         if script.eval?
@@ -155,7 +155,7 @@ module Rubinius
       end
     else
       case executable
-      when CompiledMethod, AccessVariable
+      when CompiledCode, AccessVariable
         mod.add_ivars(executable)
       end
 
@@ -175,7 +175,7 @@ module Rubinius
     executable.serial = 1
     if executable.respond_to? :scope=
       # If we're adding a method inside ane eval, dup it so that
-      # we don't share the CompiledMethod with the eval, since
+      # we don't share the CompiledCode with the eval, since
       # we're going to mutate it.
       if constant_scope and script = constant_scope.current_script
         if script.eval?
@@ -275,4 +275,28 @@ module Rubinius
     cs = Rubinius::ConstantScope.of_sender
     return cs.absolute_active_path
   end
+
+  def self.terminal_width
+    return @terminal_width if @terminal_width
+    if Terminal and ENV['TERM'] and !ENV['RBX_NO_COLS']
+      if ENV["COLUMNS"]
+        @terminal_width = ENV["COLUMNS"].to_i
+      end
+      begin
+        `which stty &> /dev/null`
+        if $?.exitstatus == 0
+          @terminal_width = `stty size`.split.last.to_i
+        end
+      end
+      begin
+        `which tput &> /dev/null`
+        if $?.exitstatus == 0
+          @terminal_width = `tput cols`.to_i
+        end
+      end
+    end
+    @terminal_width = 80 if @terminal_width.zero?
+    @terminal_width
+  end
+
 end

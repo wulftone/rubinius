@@ -37,6 +37,7 @@ class Regexp
       return nil
     end
 
+    str = str.to_s if str.is_a?(Symbol)
     str = StringValue(str)
     result = search_region(str, pos, str.bytesize, true)
     Regexp.last_match = result
@@ -45,6 +46,24 @@ class Regexp
       yield result
     else
       result
+    end
+  end
+
+  # Returns the index of the first character in the region that
+  # matched or nil if there was no match. See #match for returning
+  # the MatchData instead.
+  def =~(str)
+    str = str.to_s if str.is_a?(Symbol)
+    # unless str.nil? because it's nil and only nil, not false.
+    str = StringValue(str) unless str.nil?
+
+    match = match_from(str, 0)
+    if match
+      Regexp.last_match = match
+      return match.begin(0)
+    else
+      Regexp.last_match = nil
+      return nil
     end
   end
 
@@ -124,6 +143,7 @@ class Regexp
   end
 
   def self.escape(str)
+    str = str.to_s if str.is_a?(Symbol)
     escaped = StringValue(str).transform(ESCAPE_TABLE, true)
     if escaped.ascii_only?
       escaped.force_encoding Encoding::US_ASCII
@@ -140,6 +160,32 @@ class Regexp
 end
 
 class MatchData
+
+  def begin(idx)
+    if idx == 0
+      start = @full.at(0)
+    else
+      start = @region.at(idx - 1).at(0)
+    end
+    Rubinius.invoke_primitive :string_character_index, @source, start, 0
+  end
+
+  def end(idx)
+    if idx == 0
+      fin = @full.at(1)
+    else
+      fin = @region.at(idx - 1).at(1)
+    end
+    Rubinius.invoke_primitive :string_character_index, @source, fin, 0
+  end
+
+  def offset(idx)
+    out = []
+    out << self.begin(idx)
+    out << self.end(idx)
+    return out
+  end
+
   def [](idx, len = nil)
     return to_a[idx, len] if len
 
@@ -183,4 +229,5 @@ class MatchData
       captures == other.captures
   end
   alias_method :eql?, :==
+
 end

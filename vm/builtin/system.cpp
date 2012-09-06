@@ -530,6 +530,24 @@ namespace rubinius {
     return cNil;
   }
 
+  Integer* System::vm_gc_count(STATE) {
+    return Integer::from(state, state->memory()->gc_stats.young_collection_count.read() +
+                                state->memory()->gc_stats.full_collection_count.read());
+  }
+
+  Integer* System::vm_gc_size(STATE) {
+    return Integer::from(state, state->shared().config.gc_bytes * 2 +
+                                state->memory()->immix_usage() +
+                                state->memory()->loe_usage() +
+                                state->memory()->code_usage() +
+                                state->shared().symbols.bytes_used());
+  }
+
+  Integer* System::vm_gc_time(STATE) {
+    return Integer::from(state, state->memory()->gc_stats.total_young_collection_time.read() +
+                                state->memory()->gc_stats.total_full_collection_time.read());
+  }
+
   Object* System::vm_get_config_item(STATE, String* var) {
     ConfigParser::Entry* ent = state->shared().user_variables.find(var->c_str(state));
     if(!ent) return cNil;
@@ -582,7 +600,7 @@ namespace rubinius {
     bool include_vars = CBOOL(inc_vars);
 
     for(native_int i = skip->to_native(); call_frame && i > 0; --i) {
-      call_frame = static_cast<CallFrame*>(call_frame->previous);
+      call_frame = call_frame->previous;
     }
 
     return Location::from_call_stack(state, call_frame, include_vars);
@@ -593,7 +611,7 @@ namespace rubinius {
     CallFrame* call_frame = calling_environment;
 
     for(native_int i = skip->to_native(); call_frame && i > 0; --i) {
-      call_frame = static_cast<CallFrame*>(call_frame->previous);
+      call_frame = call_frame->previous;
     }
 
     return Location::mri_backtrace(state, call_frame);
@@ -739,9 +757,9 @@ namespace rubinius {
       ts.tv_sec  += tv.tv_sec + nano / NANOSECONDS;
       ts.tv_nsec  = nano % NANOSECONDS;
 
-      state->park_timed(gct, calling_environment, &ts);
+      if(!state->park_timed(gct, calling_environment, &ts)) return NULL;
     } else {
-      state->park(gct, calling_environment);
+      if(!state->park(gct, calling_environment)) return NULL;
     }
 
     if(!state->check_async(calling_environment)) return NULL;
@@ -913,7 +931,7 @@ namespace rubinius {
   }
 
   Object* System::vm_add_method(STATE, GCToken gct, Symbol* name,
-                                CompiledMethod* method,
+                                CompiledCode* method,
                                 ConstantScope* scope, Object* vis)
   {
     Module* mod = scope->for_method_definition();
@@ -972,7 +990,7 @@ namespace rubinius {
   }
 
   Object* System::vm_attach_method(STATE, GCToken gct, Symbol* name,
-                                   CompiledMethod* method,
+                                   CompiledCode* method,
                                    ConstantScope* scope, Object* recv)
   {
     Module* mod = recv->singleton_class(state);
@@ -1033,10 +1051,10 @@ namespace rubinius {
 
     OnStack<2> os(state, env, show);
 
-    VMMethod* vmm = env->vmmethod(state, gct);
+    MachineCode* mcode = env->machine_code(state, gct);
 
     jit::Compiler jit(ls);
-    jit.compile_block(ls, env->code(), vmm);
+    jit.compile_block(ls, env->compiled_code(), mcode);
 
     if(show->true_p()) {
       jit.show_machine_code();
@@ -1065,9 +1083,9 @@ namespace rubinius {
     bool disable = CBOOL(o_disable);
 
     while(obj) {
-      if(CompiledMethod* cm = try_as<CompiledMethod>(obj)) {
-        if(VMMethod* vmm = cm->backend_method()) {
-          vmm->deoptimize(state, cm, 0, disable);
+      if(CompiledCode* code = try_as<CompiledCode>(obj)) {
+        if(MachineCode* mcode = code->machine_code()) {
+          mcode->deoptimize(state, code, 0, disable);
         }
         total++;
       }
@@ -1552,25 +1570,25 @@ namespace rubinius {
     return tuple;
   }
 
-  Object* System::vm_run_script(STATE, GCToken gct, CompiledMethod* cm,
+  Object* System::vm_run_script(STATE, GCToken gct, CompiledCode* code,
                                 CallFrame* calling_environment)
   {
-    Dispatch msg(state->symbol("__script__"), G(object), cm);
+    Dispatch msg(state->symbol("__script__"), G(object), code);
     Arguments args(state->symbol("__script__"), G(main), cNil, 0, 0);
 
-    OnStack<1> os(state, cm);
+    OnStack<1> os(state, code);
 
-    cm->internalize(state, gct, 0, 0);
+    code->internalize(state, gct, 0, 0);
 
 #ifdef RBX_PROFILER
     if(unlikely(state->vm()->tooling())) {
-      tooling::ScriptEntry me(state, cm);
-      return cm->backend_method()->execute_as_script(state, cm, calling_environment);
+      tooling::ScriptEntry me(state, code);
+      return code->machine_code()->execute_as_script(state, code, calling_environment);
     } else {
-      return cm->backend_method()->execute_as_script(state, cm, calling_environment);
+      return code->machine_code()->execute_as_script(state, code, calling_environment);
     }
 #else
-    return cm->backend_method()->execute_as_script(state, cm, calling_environment);
+    return code->machine_code()->execute_as_script(state, code, calling_environment);
 #endif
   }
 

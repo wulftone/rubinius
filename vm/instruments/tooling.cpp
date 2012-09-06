@@ -6,7 +6,7 @@
 #include "instruments/rbxti-internal.hpp"
 #include "instruments/tooling.hpp"
 
-#include "builtin/compiledmethod.hpp"
+#include "builtin/compiledcode.hpp"
 #include "builtin/block_environment.hpp"
 #include "builtin/variable_scope.hpp"
 #include "builtin/system.hpp"
@@ -62,14 +62,14 @@ namespace tooling {
   }
 
   void* ToolBroker::enter_method(STATE, Executable* exec, Module* o_mod,
-                                 Arguments& args, CompiledMethod* cm)
+                                 Arguments& args, CompiledCode* code)
   {
     if(!enter_method_func_) return 0;
 
     rbxti::robject recv = rbxti::s(args.recv());
     rbxti::rsymbol name = rbxti::o(args.name());
     rbxti::rmodule mod =  rbxti::o(o_mod);
-    rbxti::rmethod meth = rbxti::o(cm);
+    rbxti::rmethod meth = rbxti::o(code);
 
     return enter_method_func_(state->vm()->tooling_env(), recv, name, mod, meth);
   }
@@ -87,7 +87,7 @@ namespace tooling {
 
     rbxti::rsymbol name = rbxti::o(env->top_scope()->method()->name());
     rbxti::rmodule mod =  rbxti::o(i_mod);
-    rbxti::rmethod meth = rbxti::o(env->code());
+    rbxti::rmethod meth = rbxti::o(env->compiled_code());
 
     return enter_block_func_(state->vm()->tooling_env(), name, mod, meth);
   }
@@ -110,11 +110,11 @@ namespace tooling {
     leave_gc_func_(state->vm()->tooling_env(), tag);
   }
 
-  void* ToolBroker::enter_script(STATE, CompiledMethod* cm)
+  void* ToolBroker::enter_script(STATE, CompiledCode* code)
   {
     if(!enter_script_func_) return 0;
 
-    rbxti::rmethod meth = rbxti::o(cm);
+    rbxti::rmethod meth = rbxti::o(code);
 
     return enter_script_func_(state->vm()->tooling_env(), meth);
   }

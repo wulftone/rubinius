@@ -6,7 +6,7 @@ class Proc
     Rubinius.primitive :proc_from_env
 
     if Rubinius::Type.object_kind_of? env, Rubinius::BlockEnvironment
-      raise PrimitiveFailure, "Unable to create Proc from BlockEnvironment"
+      raise PrimitiveFailure, "Proc.__from_block__ primitive failed to create Proc from BlockEnvironment"
     else
       begin
         env.to_proc
@@ -75,7 +75,7 @@ class Proc
       return @bound_method.parameters
     end
 
-    code = @block.code
+    code = @block.compiled_code
 
     return [] unless code.respond_to? :local_names
 
@@ -135,15 +135,6 @@ class Proc
   class Method < Proc
     attr_accessor :bound_method
 
-    def __yield__(*args, &block)
-      # do a block style unwrap..
-      if args.size == 1 and args.first.kind_of? Array
-        args = args.first
-      end
-
-      @bound_method.call(*args, &block)
-    end
-
     def call(*args, &block)
       @bound_method.call(*args, &block)
     end
@@ -158,14 +149,14 @@ class Proc
     end
 
     def inspect
-      cm = @bound_method.executable
-      if cm.respond_to? :file
-        if cm.lines
-          line = cm.first_line
+      code = @bound_method.executable
+      if code.respond_to? :file
+        if code.lines
+          line = code.first_line
         else
           line = "-1"
         end
-        file = cm.file
+        file = code.file
       else
         line = "-1"
         file = "(unknown)"

@@ -67,23 +67,6 @@ class Regexp
     return res ? res.begin(0) : nil
   end
 
-  # Returns the index of the first character in the region that
-  # matched or nil if there was no match. See #match for returning
-  # the MatchData instead.
-  def =~(str)
-    # unless str.nil? because it's nil and only nil, not false.
-    str = StringValue(str) unless str.nil?
-
-    match = match_from(str, 0)
-    if match
-      Regexp.last_match = match
-      return match.begin(0)
-    else
-      Regexp.last_match = nil
-      return nil
-    end
-  end
-
   def match_all(str)
     start = 0
     arr = []
@@ -92,7 +75,7 @@ class Regexp
       if match.collapsing?
         start += 1
       else
-        start = match.end(0)
+        start = match.full.at(1)
       end
     end
     arr
@@ -415,23 +398,6 @@ class MatchData
 
   def full
     @full
-  end
-
-  def begin(idx)
-    return @full.at(0) if idx == 0
-    return @region.at(idx - 1).at(0)
-  end
-
-  def end(idx)
-    return @full.at(1) if idx == 0
-    @region.at(idx - 1).at(1)
-  end
-
-  def offset(idx)
-    out = []
-    out << self.begin(idx)
-    out << self.end(idx)
-    return out
   end
 
   def length

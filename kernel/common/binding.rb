@@ -2,7 +2,7 @@
 
 class Binding
   attr_accessor :variables
-  attr_accessor :code
+  attr_accessor :compiled_code
   attr_accessor :constant_scope
   attr_accessor :proc_environment
   attr_accessor :self
@@ -17,7 +17,7 @@ class Binding
   # all the right arguments.
   #
   # +variables+ is a Rubinius::VariableScope object
-  # +code+ is a Rubinius::CompiledMethod object
+  # +code+ is a Rubinius::CompiledCode object
   # +constant_scope+ is a Rubinius::ConstantScope object
   #
   # See Kernel#binding in kernel/common/eval.rb for a simple example of
@@ -28,7 +28,7 @@ class Binding
 
     bind.self = recv || variables.self
     bind.variables = variables
-    bind.code = code
+    bind.compiled_code = code
     bind.constant_scope = constant_scope
     bind.location = location
 

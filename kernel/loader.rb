@@ -49,19 +49,6 @@ module Rubinius
       # Set the default visibility for the top level binding
       TOPLEVEL_BINDING.variables.method_visibility = :private
 
-      # set terminal width
-      width = 80
-      if Terminal and ENV['TERM'] and !ENV['RBX_NO_COLS']
-        begin
-          `which tput &> /dev/null`
-          if $?.exitstatus == 0
-            res = `tput cols`.to_i
-            width = res if res > 0
-          end
-        end
-      end
-      Rubinius.const_set 'TERMINAL_WIDTH', width
-
       $VERBOSE = false
 
       # We export the language mode into the environment so subprocesses like
@@ -125,6 +112,12 @@ module Rubinius
       # Set up a handler for SIGINT that raises Interrupt on the main thread
       Signal.trap("INT") do |sig|
         raise Interrupt, "Thread has been interrupted"
+      end
+
+      ["HUP", "QUIT", "TERM", "ALRM", "USR1", "USR2"].each do |signal|
+        Signal.trap(signal) do |sig|
+          raise SignalException, sig
+        end
       end
     end
 
@@ -229,7 +222,7 @@ module Rubinius
       options.doc "\nRuby options"
       options.on "-", "Read and evaluate code from STDIN" do
         @run_irb = false
-        $0 = "-"
+        set_program_name "-"
         CodeLoader.execute_script STDIN.read
       end
 
@@ -263,7 +256,7 @@ module Rubinius
 
       options.on "-e", "CODE", "Compile and execute CODE" do |code|
         @run_irb = false
-        $0 = "(eval)"
+        set_program_name "(eval)"
         @evals << code
       end
 
@@ -357,7 +350,7 @@ module Rubinius
           end
         end
 
-        $0 = script if file
+        set_program_name script if file
 
         # if missing, let it die a natural death
         @script = file ? file : script
@@ -464,6 +457,12 @@ VM Options
         check_syntax
       end
     end
+
+    # Sets $0 ($PROGRAM_NAME) without changing the process title
+    def set_program_name(name)
+      Rubinius::Globals.set! :$0, name
+    end
+    private :set_program_name
 
     def set_default_internal_encoding(encoding)
       if @default_internal_encoding_set && Encoding.default_internal.name != encoding
@@ -610,7 +609,7 @@ to rebuild the compiler.
         end
       end
 
-      $0 = @script
+      set_program_name @script
       CodeLoader.load_script @script, @debugging
     end
 
@@ -671,7 +670,7 @@ to rebuild the compiler.
 
       if Terminal
         repr = ENV['RBX_REPR'] || "bin/irb"
-        $0 = repr
+        set_program_name repr
         prog = File.join @main_lib, repr
         begin
           # HACK: this was load but load raises LoadError
@@ -685,7 +684,7 @@ to rebuild the compiler.
           exit 1
         end
       else
-        $0 = "(eval)"
+        set_program_name "(eval)"
         CodeLoader.execute_script "p #{STDIN.read}"
       end
     end
@@ -716,7 +715,7 @@ to rebuild the compiler.
       run_at_exits
 
       @stage = "running object finalizers"
-      GC.start
+      ::GC.start
       ObjectSpace.run_finalizers
 
       # TODO: Fix these with better -X processing
@@ -828,6 +827,14 @@ to rebuild the compiler.
 
           STDERR.puts "\nBacktrace:"
           STDERR.puts e.awesome_backtrace.show
+        rescue Interrupt => e
+          @exit_code = 1
+
+          write_last_error(e)
+          e.render "An exception occurred #{@stage}"
+        rescue SignalException => e
+          Signal.trap(e.signo, "SIG_DFL")
+          Process.kill e.signo, Process.pid
         rescue Object => e
           @exit_code = 1
 

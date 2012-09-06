@@ -4,7 +4,7 @@
 #include "objectmemory.hpp"
 #include "builtin/class.hpp"
 #include "builtin/block_environment.hpp"
-#include "builtin/compiledmethod.hpp"
+#include "builtin/compiledcode.hpp"
 #include "builtin/system.hpp"
 #include "builtin/location.hpp"
 #include "builtin/nativemethod.hpp"
@@ -13,7 +13,7 @@
 #include "arguments.hpp"
 #include "on_stack.hpp"
 
-#include "vmmethod.hpp"
+#include "machine_code.hpp"
 #include "arguments.hpp"
 #include "dispatch.hpp"
 #include "call_frame.hpp"
@@ -34,6 +34,11 @@ namespace rubinius {
 
   Proc* Proc::from_env(STATE, Object* self, Object* env) {
     if(Proc* p = try_as<Proc>(env)) {
+      if(p->klass() != self &&
+         p->klass() != G(proc)->get_const(state, "Method")) {
+        p = as<Proc>(p->duplicate(state));
+        p->klass(state, as<Class>(self));
+      }
       return p;
     }
 
@@ -55,11 +60,11 @@ namespace rubinius {
     // Check the arity in lambda mode
     if(lambda_style && !block_->nil_p()) {
       flags = CallFrame::cIsLambda;
-      int total = self->block_->code()->total_args()->to_native();
-      int required = self->block_->code()->required_args()->to_native();
+      int total = self->block_->compiled_code()->total_args()->to_native();
+      int required = self->block_->compiled_code()->required_args()->to_native();
 
       bool arity_ok = false;
-      if(Fixnum* fix = try_as<Fixnum>(self->block_->code()->splat())) {
+      if(Fixnum* fix = try_as<Fixnum>(self->block_->compiled_code()->splat())) {
         switch(fix->to_native()) {
         case -2:
           arity_ok = true;
@@ -169,7 +174,7 @@ namespace rubinius {
     // Check the arity in lambda mode
     if(lambda_style) {
       flags = CallFrame::cIsLambda;
-      int required = block_->code()->required_args()->to_native();
+      int required = block_->compiled_code()->required_args()->to_native();
 
       if(args.total() < 1 || (required >= 0 && (size_t)required != args.total() - 1)) {
         Exception* exc =

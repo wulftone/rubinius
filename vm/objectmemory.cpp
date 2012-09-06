@@ -927,7 +927,7 @@ step1:
   }
 
   void ObjectMemory::needs_finalization(Object* obj, FinalizerFunction func) {
-    SYNC_TL;
+    SCOPE_LOCK(ManagedThread::current(), finalizer_lock_);
 
     FinalizeObject fi;
     fi.object = obj;
@@ -939,7 +939,7 @@ step1:
   }
 
   void ObjectMemory::set_ruby_finalizer(Object* obj, Object* fin) {
-    SYNC_TL;
+    SCOPE_LOCK(ManagedThread::current(), finalizer_lock_);
 
     // See if there already one.
     for(std::list<FinalizeObject>::iterator i = finalize_.begin();
@@ -1209,7 +1209,7 @@ step1:
   }
 
   size_t& ObjectMemory::code_usage() {
-    return (size_t&)code_manager_.size();
+    return code_manager_.size();
   }
 
   void ObjectMemory::memstats() {

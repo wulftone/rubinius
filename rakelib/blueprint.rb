@@ -13,7 +13,7 @@ Daedalus.blueprint do |i|
   # On other combinations of platform and compiler, this flag is implicitly
   # assumed from -fno-omit-frame-pointer. To use same build flags across
   # platforms, -mno-omit-leaf-frame-pointer is added explicitly.
-  gcc.cflags << "-mno-omit-leaf-frame-pointer"
+  gcc.cflags << "-mno-omit-leaf-frame-pointer" if Rubinius::BUILD_CONFIG[:cc] == "clang"
 
   gcc.cflags << "-Wno-unused-function"
   gcc.cflags << "-g -Werror"
@@ -25,7 +25,7 @@ Daedalus.blueprint do |i|
   gcc.cflags << Rubinius::BUILD_CONFIG[:user_cflags]
 
   if ENV['DEV']
-    gcc.cflags << "-O0 -ggdb3"
+    gcc.cflags << "-O0"
     gcc.mtime_only = true
   else
     gcc.cflags << "-O2"

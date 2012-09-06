@@ -169,6 +169,10 @@
 
 /* Encoding */
 #ifdef RUBY_VERSION_IS_1_9
+#define HAVE_ENCODING_GET                  1
+#define HAVE_ENCODING_SET                  1
+#define HAVE_ENC_CODERANGE_ASCIIONLY       1
+
 #define HAVE_RB_ASCII8BIT_ENCODING         1
 #define HAVE_RB_ASCII8BIT_ENCINDEX         1
 #define HAVE_RB_USASCII_ENCODING           1
@@ -194,8 +198,6 @@
 #define HAVE_RB_ENC_GET                    1
 #define HAVE_RB_ENC_GET_INDEX              1
 #define HAVE_RB_ENC_SET_INDEX              1
-#define HAVE_RB_ENCODING_GET               1
-#define HAVE_RB_ENCODING_SET               1
 #define HAVE_RB_ENC_TO_INDEX               1
 #define HAVE_RB_OBJ_ENCODING               1
 
@@ -222,6 +224,8 @@
 #endif
 #define HAVE_RB_LONG2INT                   1
 #endif
+
+#define HAVE_RB_ITER_BREAK                 1
 
 /* Enumerable */
 #define HAVE_RB_ENUMERATORIZE              1
@@ -302,6 +306,11 @@
 #define HAVE_RB_SET_END_PROC               1
 #define HAVE_RB_SYS_FAIL                   1
 #define HAVE_RB_THROW                      1
+#define HAVE_RB_CATCH                      1
+#ifdef RUBY_VERSION_IS_1_9
+#define HAVE_RB_THROW_OBJ                  1
+#define HAVE_RB_CATCH_OBJ                  1
+#endif
 #define HAVE_RB_WARN                       1
 #define HAVE_RB_YIELD                      1
 #define HAVE_RB_YIELD_SPLAT                1

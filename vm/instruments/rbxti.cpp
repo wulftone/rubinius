@@ -3,7 +3,7 @@
 #include "rbxti-internal.hpp"
 
 #include "vm/vm.hpp"
-#include "vmmethod.hpp"
+#include "machine_code.hpp"
 #include "configuration.hpp"
 #include "config_parser.hpp"
 
@@ -90,7 +90,7 @@ namespace rbxti {
   }
 
   rmethod Env::cast_to_rmethod(robject obj) {
-    if(CompiledMethod* c = try_as<CompiledMethod>((Object*)obj)) {
+    if(CompiledCode* c = try_as<CompiledCode>((Object*)obj)) {
       return o(c);
     }
 
@@ -212,19 +212,19 @@ namespace rbxti {
     return s(cNil);
   }
 
-  rsymbol Env::method_file(rmethod cm) {
-    return o(i(cm)->file());
+  rsymbol Env::method_file(rmethod code) {
+    return o(i(code)->file());
   }
 
-  r_mint Env::method_line(rmethod cm) {
-    return i(cm)->start_line(private_->state());
+  r_mint Env::method_line(rmethod code) {
+    return i(code)->start_line(private_->state());
   }
 
   r_mint Env::method_id(rmethod meth) {
-    CompiledMethod* cm = i(meth);
+    CompiledCode* code = i(meth);
 
-    if(VMMethod* vmm = cm->backend_method()) {
-      return (vmm->method_id() << 1) | 1;
+    if(MachineCode* mcode = code->machine_code()) {
+      return (mcode->method_id() << 1) | 1;
     }
 
     return 0;

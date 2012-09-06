@@ -8,6 +8,7 @@
 #include "instruments/timing.hpp"
 #include "global_cache.hpp"
 #include "capi/handles.hpp"
+#include "capi/tag.hpp"
 
 #include "util/thread.hpp"
 #include "inline_cache.hpp"
@@ -18,6 +19,9 @@
 #include "builtin/randomizer.hpp"
 #include "builtin/array.hpp"
 #include "builtin/thread.hpp"
+
+#include <iostream>
+#include <iomanip>
 
 #ifdef ENABLE_LLVM
 #include "llvm/state.hpp"
@@ -63,7 +67,7 @@ namespace rubinius {
     if(!initialized_) return;
 
     if(config.gc_show) {
-      std::cerr << "Time spent waiting: " << world_->time_waiting() << "\n";
+      std::cerr << "Time spent waiting for the world to stop: " << world_->time_waiting() << "ns\n";
     }
 
 #ifdef ENABLE_LLVM
@@ -170,6 +174,41 @@ namespace rubinius {
                                                const char* file, int line)
   {
     SYNC_TL;
+    if(*loc && REFERENCE_P(*loc)) {
+      if(!global_handles_->validate(*loc)) {
+        std::cerr << std::endl << "==================================== ERROR ====================================" << std::endl;
+        std::cerr << "| An extension is trying to add an invalid handle at the following location:  |" << std::endl;
+        std::ostringstream out;
+        out << file << ":" << line;
+        std::cerr << "| " << std::left << std::setw(75) << out.str() << " |" << std::endl;
+        std::cerr << "|                                                                             |" << std::endl;
+        std::cerr << "| An invalid handle means that it points to an invalid VALUE. This can happen |" << std::endl;
+        std::cerr << "| when you haven't initialized the VALUE pointer yet, in which case we        |" << std::endl;
+        std::cerr << "| suggest either initializing it properly or otherwise first initialize it to |" << std::endl;
+        std::cerr << "| NULL if you can only set it to a proper VALUE pointer afterwards. Consider  |" << std::endl;
+        std::cerr << "| the following example that could cause this problem:                        |" << std::endl;
+        std::cerr << "|                                                                             |" << std::endl;
+        std::cerr << "| VALUE ptr;                                                                  |" << std::endl;
+        std::cerr << "| rb_gc_register_address(&ptr);                                               |" << std::endl;
+        std::cerr << "| ptr = rb_str_new(\"test\");                                                   |" << std::endl;
+        std::cerr << "|                                                                             |" << std::endl;
+        std::cerr << "| Either change this register after initializing                              |" << std::endl;
+        std::cerr << "|                                                                             |" << std::endl;
+        std::cerr << "| VALUE ptr;                                                                  |" << std::endl;
+        std::cerr << "| ptr = rb_str_new(\"test\");                                                   |" << std::endl;
+        std::cerr << "| rb_gc_register_address(&ptr);                                               |" << std::endl;
+        std::cerr << "|                                                                             |" << std::endl;
+        std::cerr << "| Or initialize it with NULL:                                                 |" << std::endl;
+        std::cerr << "|                                                                             |" << std::endl;
+        std::cerr << "| VALUE ptr = NULL;                                                           |" << std::endl;
+        std::cerr << "| rb_gc_register_address(&ptr);                                               |" << std::endl;
+        std::cerr << "| ptr = rb_str_new(\"test\");                                                   |" << std::endl;
+        std::cerr << "|                                                                             |" << std::endl;
+        std::cerr << "================================== ERROR ======================================" << std::endl;
+        rubinius::bug("Halting due to invalid handle");
+      }
+    }
+
     capi::GlobalHandle* global_handle = new capi::GlobalHandle(loc, file, line);
     global_handle_locations_.push_back(global_handle);
   }
@@ -180,8 +219,8 @@ namespace rubinius {
     for(std::list<capi::GlobalHandle*>::iterator i = global_handle_locations_.begin();
         i != global_handle_locations_.end(); ++i) {
       if((*i)->handle() == loc) {
-        global_handle_locations_.erase(i);
         delete *i;
+        global_handle_locations_.erase(i);
         return;
       }
     }

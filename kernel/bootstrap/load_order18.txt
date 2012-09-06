@@ -8,7 +8,7 @@ bytearray.rbc
 channel.rbc
 class.rbc
 compactlookuptable.rbc
-compiled_method.rbc
+compiled_code.rbc
 configuration.rbc
 dir.rbc
 exception.rbc
@@ -28,7 +28,6 @@ proc.rbc
 process.rbc
 regexp.rbc
 rubinius.rbc
-rubinius18.rbc
 constant_scope.rbc
 string.rbc
 symbol.rbc
