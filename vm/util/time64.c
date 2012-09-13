@@ -3,7 +3,7 @@
  * and is available at http://github.com/mschwern/y2038. That software is
  * originally derived from Paul Sheer's pivotal_gmtime_r.c.
  * The code has been modified by Dirkjan Bussink to incorporate several concepts
- * take from Ruby 1.9.3, regarding the mapping tables for years far in the future
+ * taken from Ruby 1.9.3, regarding the mapping tables for years far in the future
  * and far in the past.
  */
 
@@ -361,7 +361,7 @@ struct tm64* gmtime64_r(const time64_t* time64, struct tm64* tm64) {
 
   tm64->tm_isdst = 0;
   tm64->tm_gmtoff = 0;
-  tm64->tm_zone = "UTC";
+  tm64->tm_zone = (char *)"UTC";
 
   /*
    * Fallback because out of range of time_t or gmtime_r failed
