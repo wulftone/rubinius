@@ -13,7 +13,8 @@ task :install => %w[build:build gems:install install:files install:done]
 # that path is writable. If not, we require explicit permission.
 def need_permission?
   FileList["#{BUILD_CONFIG[:stagingdir]}/*"].each do |name|
-    dir = File.expand_path "#{BUILD_CONFIG[:prefixdir]}/#{name}"
+    destdir = ENV['DESTDIR'] || ''
+    dir = File.expand_path(File.join(destdir, BUILD_CONFIG[:prefixdir], name))
 
     until dir == "/"
       if File.directory? dir
@@ -190,7 +191,8 @@ exec #{BUILD_CONFIG[:stagingdir]}#{BUILD_CONFIG[:bindir]}/$EXE "$@"
 end
 
 namespace :install do
-  desc "Install all the Rubinius files"
+  desc "Install all the Rubinius files. Use DESTDIR environment variable " \
+       "to specify custom installation location."
   task :files do
     if BUILD_CONFIG[:stagingdir]
       if need_permission?
@@ -215,7 +217,8 @@ oppropriate command to elevate permissions (eg su, sudo).
         exit(1)
       else
         stagingdir = BUILD_CONFIG[:stagingdir]
-        prefixdir = BUILD_CONFIG[:prefixdir]
+        destdir = ENV['DESTDIR'] || ''
+        prefixdir = File.join(destdir, BUILD_CONFIG[:prefixdir])
 
         install_capi_include "#{stagingdir}#{BUILD_CONFIG[:include18dir]}",
                              "#{prefixdir}#{BUILD_CONFIG[:include18dir]}"

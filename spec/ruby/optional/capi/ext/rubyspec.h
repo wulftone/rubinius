@@ -210,6 +210,7 @@
 
 #define HAVE_RB_TO_ENCODING                1
 #define HAVE_RB_TO_ENCODING_INDEX          1
+#define HAVE_RB_ENC_NTH                    1
 
 #define HAVE_RB_EENCCOMPATERROR            1
 
@@ -295,6 +296,7 @@
 /* Kernel */
 #define HAVE_RB_BLOCK_GIVEN_P              1
 #define HAVE_RB_BLOCK_PROC                 1
+#define HAVE_RB_BLOCK_CALL                 1
 #define HAVE_RB_ENSURE                     1
 #define HAVE_RB_EVAL_STRING                1
 #define HAVE_RB_EXEC_RECURSIVE             1
@@ -310,6 +312,7 @@
 #ifdef RUBY_VERSION_IS_1_9
 #define HAVE_RB_THROW_OBJ                  1
 #define HAVE_RB_CATCH_OBJ                  1
+#define HAVE_RB_MAKE_BACKTRACE             1
 #endif
 #define HAVE_RB_WARN                       1
 #define HAVE_RB_YIELD                      1
@@ -446,6 +449,10 @@
 #define HAVE_RB_STR_INSPECT                1
 #define HAVE_RB_STR_INTERN                 1
 #define HAVE_RB_STR_LEN                    1
+#ifdef RUBY_VERSION_IS_1_9
+#define HAVE_RB_STR_LENGTH                 1
+#define HAVE_RB_STR_EQUAL                  1
+#endif
 #define HAVE_RB_STR_NEW                    1
 #define HAVE_RB_STR_NEW2                   1
 #define HAVE_RB_STR_NEW3                   1

@@ -149,6 +149,12 @@ VALUE string_spec_rb_str_len(VALUE self, VALUE str) {
 }
 #endif
 
+#ifdef HAVE_RB_STR_LENGTH
+VALUE string_spec_rb_str_length(VALUE self, VALUE str) {
+  return rb_str_length(str);
+}
+#endif
+
 #ifdef HAVE_RB_STR_NEW
 VALUE string_spec_rb_str_new(VALUE self, VALUE str, VALUE len) {
   return rb_str_new(RSTRING_PTR(str), FIX2INT(len));
@@ -451,6 +457,12 @@ static VALUE string_spec_rb_str_hash(VALUE self, VALUE str) {
 }
 #endif
 
+#ifdef HAVE_RB_STR_EQUAL
+VALUE string_spec_rb_str_equal(VALUE self, VALUE str1, VALUE str2) {
+  return rb_str_equal(str1, str2);
+}
+#endif
+
 #ifdef HAVE_RB_USASCII_STR_NEW
 static VALUE string_spec_rb_usascii_str_new(VALUE self, VALUE str, VALUE len) {
   return rb_usascii_str_new(RSTRING_PTR(str), NUM2INT(len));
@@ -533,6 +545,10 @@ void Init_string_spec() {
 
 #ifdef HAVE_RB_STR_LEN
   rb_define_method(cls, "rb_str_len", string_spec_rb_str_len, 1);
+#endif
+
+#ifdef HAVE_RB_STR_LENGTH
+  rb_define_method(cls, "rb_str_length", string_spec_rb_str_length, 1);
 #endif
 
 #ifdef HAVE_RB_STR_NEW
@@ -653,6 +669,10 @@ void Init_string_spec() {
 
 #ifdef HAVE_RB_STR_HASH
   rb_define_method(cls, "rb_str_hash", string_spec_rb_str_hash, 1);
+#endif
+
+#ifdef HAVE_RB_STR_EQUAL
+  rb_define_method(cls, "rb_str_equal", string_spec_rb_str_equal, 2);
 #endif
 
 #ifdef HAVE_RB_USASCII_STR_NEW

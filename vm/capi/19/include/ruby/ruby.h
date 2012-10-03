@@ -415,6 +415,8 @@ struct RFile {
 // MRI checks also that it's not closed...
 #define GetOpenFile(val, ptr) (ptr) = (capi_rio_struct(val))
 #define rb_stdin              rb_const_get(rb_cObject, rb_intern("STDIN"))
+#define rb_stdout             rb_const_get(rb_cObject, rb_intern("STDOUT"))
+#define rb_stderr             rb_const_get(rb_cObject, rb_intern("STDERR"))
 
 #define GetReadFile(ptr)  (ptr->f)
 #define GetWriteFile(ptr) (ptr->f)
@@ -761,6 +763,9 @@ VALUE rb_uint2big(unsigned long number);
   /** Returns 1 if obj is tainted, 0 otherwise. @internal. */
   int     rb_obj_tainted(VALUE obj);
 
+  /** Builds a string based stack trace */
+  VALUE rb_make_backtrace();
+
   /** Returns the superclass of klass or NULL. This is not the same as
    * rb_class_superclass. See MRI's rb_class_s_alloc which returns a
    * class created with rb_class_boot(0), i.e. having a NULL superclass.
@@ -916,6 +921,10 @@ VALUE rb_uint2big(unsigned long number);
 
   /* Converts implicit block into a new Proc. */
   VALUE   rb_block_proc();
+
+  typedef VALUE rb_block_call_func(VALUE, VALUE, int, VALUE*);
+  VALUE rb_block_call(VALUE,ID,int,VALUE*,VALUE(*)(ANYARGS),VALUE);
+#define HAVE_RB_BLOCK_CALL 1
 
   VALUE   rb_each(VALUE);
 
@@ -1758,6 +1767,10 @@ VALUE rb_uint2big(unsigned long number);
   char*   rb_str2cstr(VALUE string, long *len);
 
   long    rb_str_hash(VALUE str);
+
+  VALUE   rb_str_equal(VALUE self, VALUE other);
+
+  VALUE   rb_str_length(VALUE self);
 
   /** Raises an exception from the value of errno. */
   NORETURN(void rb_sys_fail(const char* mesg));

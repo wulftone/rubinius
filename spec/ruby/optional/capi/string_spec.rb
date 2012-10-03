@@ -1,3 +1,4 @@
+# encoding: UTF-8
 require File.expand_path('../spec_helper', __FILE__)
 
 load_extension('string')
@@ -568,6 +569,29 @@ describe "C-API String function" do
 end
 
 ruby_version_is "1.9" do
+
+  describe "rb_str_length" do
+    it "returns the string's length" do
+      @s.rb_str_length("dewdrops").should == 8
+    end
+
+    it "counts characters in multi byte encodings" do
+      @s.rb_str_length("düwdrops").should == 8
+    end
+  end
+
+  describe "rb_str_equal" do
+    it "compares two same strings" do
+      s = "hello"
+      @s.rb_str_equal(s, "hello").should be_true
+    end
+
+    it "compares two different strings" do
+      s = "hello"
+      @s.rb_str_equal(s, "hella").should be_false
+    end
+  end
+
   describe :rb_external_str_new, :shared => true do
     it "returns a String in the default external encoding" do
       Encoding.default_external = "UTF-8"

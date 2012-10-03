@@ -460,6 +460,13 @@ extern "C" {
     return string->byte_size();
   }
 
+  VALUE rb_str_length(VALUE self) {
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    String* string = capi_get_string(env, self);
+    return LONG2FIX(string->char_size(env->state()));
+  }
+
   void rb_str_set_len(VALUE self, size_t len) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
@@ -479,5 +486,16 @@ extern "C" {
     String* string = capi_get_string(env, self);
 
     return string->hash_string(env->state());
+  }
+
+  VALUE rb_str_equal(VALUE self, VALUE other) {
+    if(self == other) {
+      return Qtrue;
+    }
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+    String* string = capi_get_string(env, self);
+    String* other_str = capi_get_string(env, other);
+
+    return env->get_handle(string->equal(env->state(), other_str));
   }
 }
