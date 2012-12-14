@@ -188,11 +188,8 @@ module Rubinius
       if args.empty? and cmd = Rubinius::Type.try_convert(first, String, :to_str)
         if cmd.empty?
           raise Errno::ENOENT
-        elsif /([*?{}\[\]<>()~&|$;'`"\n])/o.match(cmd)
-          return ["/bin/sh", ["sh", "-c", cmd]]
         else
-          args = cmd.split(' ')
-          return [args.first, args]
+          return [cmd, []]
         end
       elsif cmd = Rubinius::Type.try_convert(first, Array, :to_ary)
         raise ArgumentError, "wrong first argument" unless cmd.size == 2
@@ -287,6 +284,15 @@ module Process
 
   def self.spawn(*args)
     env, prog, argv, redirects, options = Rubinius::Spawn.extract_arguments(*args)
+
+    unless options[:close_others] == false
+      3.upto(IO.max_open_fd).each do |fd|
+        begin
+          IO.for_fd(fd, :autoclose => false).close_on_exec = true
+        rescue Errno::EBADF
+        end
+      end
+    end
 
     IO.pipe do |read, write|
       pid = Process.fork do

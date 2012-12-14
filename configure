@@ -47,7 +47,7 @@ class Configure
     @cxx = nil
     @rake = nil
     @tar = nil
-    @pers = nil
+    @perl = nil
 
     # Versions
     @default_version = "18"
@@ -92,6 +92,7 @@ class Configure
     @sourcedir    = root
     @prefixdir    = nil
     @bindir       = nil
+    @appdir       = nil
     @librarydir   = nil
     @runtimedir   = nil
     @kerneldir    = nil
@@ -118,9 +119,9 @@ class Configure
 
     # Essential settings (modify these for creating releases)
     @libversion = "2.0"
-    @version = "#{@libversion}.0dev"
-    @release_date = "yyyy-mm-dd"
-    @config_version = 162
+    @version = "#{@libversion}.0rc1"
+    @release_date = "2012-11-02"
+    @config_version = 163
   end
 
   # Set up system commands to run in cmd.exe on Windows. Either Windows
@@ -143,7 +144,7 @@ class Configure
 
   def expand_install_dir(dir)
     dir = expand dir
-    if File.directory?(dir) and dir !~ /(rubinius|rbx).*\/?$/
+    if !@preserve_prefix and File.directory?(dir) and dir !~ /(rubinius|rbx).*\/?$/
       original = dir
       dir += "/rubinius/#{@libversion}"
       @log.write "The directory #{original} already exists, installing to #{dir}"
@@ -174,7 +175,18 @@ class Configure
   end
 
   def set_filesystem_paths
-    @prefixdir    = @sourcedir unless @prefixdir
+    @prefixdir = @prefixdir ? expand_install_dir(@prefixdir) : @sourcedir
+
+    if @appdir
+      dir = expand_install_dir @appdir
+
+      @librarydir = dir + "/lib"
+      @runtimedir = dir + "/runtime"
+      @kerneldir  = dir + "/kernel"
+      @sitedir    = dir + "/site"
+      @vendordir  = dir + "/vendor"
+    end
+
     @bindir       = @prefixdir + "/bin" unless @bindir
     @librarydir   = @prefixdir + "/lib" unless @librarydir
     @runtimedir   = @prefixdir + "/runtime" unless @runtimedir
@@ -352,7 +364,7 @@ class Configure
     o.doc "\n File system paths for installing Rubinius"
 
     o.on "-P", "--prefix", "PATH", "Install Rubinius in subdirectories of PATH" do |dir|
-      @prefixdir = expand_install_dir dir
+      @prefixdir = dir
     end
 
     o.on "-B", "--bindir", "PATH", "Install Rubinius executable in PATH" do |dir|
@@ -367,13 +379,7 @@ class Configure
     end
 
     o.on "-A", "--appdir", "PATH", "Install Ruby runtime and libraries in PATH" do |dir|
-      dir = expand_install_dir dir
-
-      @librarydir = dir + "/lib"
-      @runtimedir = dir + "/runtime"
-      @kerneldir  = dir + "/kernel"
-      @sitedir    = dir + "/site"
-      @vendordir  = dir + "/vendor"
+      @appdir = dir
     end
 
     o.on "-L", "--libdir", "PATH", "Install Rubinius shared library in PATH" do |dir|
@@ -786,8 +792,8 @@ Unsupported language version requested: #{ver}. Options are #{@supported_version
   end
 
   def check_tools
-    @cc = ENV['CC'] || 'gcc'
-    @cxx = ENV['CXX'] || 'g++'
+    @cc ||= ENV['CC'] || 'gcc'
+    @cxx ||= ENV['CXX'] || 'g++'
 
     check_tool_version @cc, '-dumpversion', [4, 1]
     check_tool_version @cxx, '-dumpversion', [4, 1]
@@ -994,7 +1000,12 @@ int main() { return tgetnum(""); }
       end
     end
 
-    @log.write @curses ? @curses : "not found"
+    if @curses
+      @log.write(@curses)
+    else
+      @log.write("using rb-readline")
+      @rb_readline = true
+    end
   end
 
   def detect_include_dirs

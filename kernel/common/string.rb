@@ -7,6 +7,13 @@ DEFAULT_RECORD_SEPARATOR = "\n"
 class String
   include Comparable
 
+  def self.allocate
+    str = super()
+    str.__data__ = Rubinius::ByteArray.new(1)
+    str.num_bytes = 0
+    str
+  end
+
   attr_accessor :data
 
   alias_method :__data__, :data
@@ -62,7 +69,9 @@ class String
   end
 
   def +(other)
-    String.new(self) << StringValue(other)
+    other = StringValue(other)
+    Rubinius::Type.compatible_encoding self, other
+    String.new(self) << other
   end
 
   def <=>(other)
@@ -133,15 +142,15 @@ class String
       start   = Rubinius::Type.coerce_to index.first, Fixnum, :to_int
       length  = Rubinius::Type.coerce_to index.last,  Fixnum, :to_int
 
-      start += @num_bytes if start < 0
+      start += size if start < 0
 
-      length += @num_bytes if length < 0
+      length += size if length < 0
       length += 1 unless index.exclude_end?
 
-      return "" if start == @num_bytes
-      return nil if start < 0 || start > @num_bytes
+      return "" if start == size
+      return nil if start < 0 || start > size
 
-      length = @num_bytes if length > @num_bytes
+      length = size if length > size
       length = length - start
       length = 0 if length < 0
 
@@ -205,10 +214,6 @@ class String
 
     return 0 if order == 0
     return order < 0 ? -1 : 1
-  end
-
-  def center(width, padstr = " ")
-    justify width, :center, padstr
   end
 
   def chomp(separator=$/)
@@ -276,12 +281,6 @@ class String
     else
       nil
     end
-  end
-
-  def clear
-    Rubinius.check_frozen
-    self.num_bytes = 0
-    self
   end
 
   def downcase
@@ -375,42 +374,6 @@ class String
     !!find_string(str_needle, 0)
   end
 
-  def index(needle, offset=0)
-    offset = Rubinius::Type.coerce_to offset, Integer, :to_int
-    offset = @num_bytes + offset if offset < 0
-
-    return nil if offset < 0 || offset > @num_bytes
-
-    needle = needle.to_str if !needle.instance_of?(String) && needle.respond_to?(:to_str)
-
-    # What are we searching for?
-    case needle
-    when Fixnum
-      return nil if needle > 255 or needle < 0
-      return find_string(needle.chr, offset)
-    when String
-      return offset if needle == ""
-
-      needle_size = needle.size
-
-      max = @num_bytes - needle_size
-      return if max < 0 # <= 0 maybe?
-
-      return find_string(needle, offset)
-    when Regexp
-      if match = needle.match_from(self, offset)
-        Regexp.last_match = match
-        return match.begin(0)
-      else
-        Regexp.last_match = nil
-      end
-    else
-      raise TypeError, "type mismatch: #{needle.class} given"
-    end
-
-    return nil
-  end
-
   def insert(index, other)
     other = StringValue(other)
     index = Rubinius::Type.coerce_to index, Fixnum, :to_int
@@ -418,6 +381,7 @@ class String
     osize = other.size
     size = @num_bytes + osize
     str = self.class.pattern size, "\0"
+    m = Rubinius::Mirror.reflect str
 
     index = @num_bytes + 1 + index if index < 0
     if index > @num_bytes or index < 0 then
@@ -425,34 +389,26 @@ class String
     end
 
     Rubinius.check_frozen
-    hash_value = nil
+    @hash_value = nil
 
     if index == @num_bytes
-      str.copy_from self, 0, @num_bytes, 0
-      str.copy_from other, 0, osize, @num_bytes
+      m.copy_from self, 0, @num_bytes, 0
+      m.copy_from other, 0, osize, @num_bytes
     else
-      str.copy_from self, 0, index, 0 if index > 0
-      str.copy_from other, 0, osize, index
-      str.copy_from self, index, @num_bytes - index, index + osize
+      m.copy_from self, 0, index, 0 if index > 0
+      m.copy_from other, 0, osize, index
+      m.copy_from self, index, @num_bytes - index, index + osize
     end
 
     self.num_bytes = size
     @data = str.__data__
-    taint if other.tainted?
+    Rubinius::Type.infect self, other
 
     self
   end
 
   ControlCharacters = [10, 9, 7, 11, 12, 13, 27, 8]
   ControlPrintValue = ["\\n", "\\t", "\\a", "\\v", "\\f", "\\r", "\\e", "\\b"]
-
-  def inspect
-    "\"#{transform(Rubinius::CType::Printed, true)}\""
-  end
-
-  def ljust(width, padstr=" ")
-    justify(width, :left, padstr)
-  end
 
   def lstrip
     str = dup
@@ -477,52 +433,6 @@ class String
 
   def reverse
     dup.reverse!
-  end
-
-  def rindex(sub, finish=undefined)
-    if finish.equal?(undefined)
-      finish = size
-    else
-      finish = Rubinius::Type.coerce_to(finish, Integer, :to_int)
-      finish += @num_bytes if finish < 0
-      return nil if finish < 0
-      finish = @num_bytes if finish >= @num_bytes
-    end
-
-    case sub
-    when Fixnum
-      if finish == size
-        return nil if finish == 0
-        finish -= 1
-      end
-
-      begin
-        str = sub.chr
-      rescue RangeError
-        return nil
-      end
-
-      return find_string_reverse(str, finish)
-
-    when Regexp
-      match_data = sub.search_region(self, 0, finish, false)
-      Regexp.last_match = match_data
-      return match_data.begin(0) if match_data
-
-    else
-      needle = StringValue(sub)
-      needle_size = needle.size
-
-      # needle is bigger that haystack
-      return nil if size < needle_size
-
-      # Boundary case
-      return finish if needle_size == 0
-
-      return find_string_reverse(needle, finish)
-    end
-
-    return nil
   end
 
   def partition(pattern=nil)
@@ -569,10 +479,6 @@ class String
       # Nothing worked out, this is the default.
       return ["", "", self]
     end
-  end
-
-  def rjust(width, padstr = " ")
-    justify(width, :right, padstr)
   end
 
   def rstrip
@@ -1005,43 +911,6 @@ class String
     raise PrimitiveFailure, "String#tr_expand primitive failed"
   end
 
-  def justify(width, direction, padstr=" ")
-    padstr = StringValue(padstr)
-    raise ArgumentError, "zero width padding" if padstr.size == 0
-
-    width = Rubinius::Type.coerce_to width, Fixnum, :to_int
-    if width > @num_bytes
-      padsize = width - @num_bytes
-    else
-      return dup
-    end
-
-    str = self.class.pattern(1, "\0") * (padsize + @num_bytes)
-    str.taint if tainted? or padstr.tainted?
-
-    case direction
-    when :right
-      pad = String.pattern padsize, padstr
-      str.copy_from pad, 0, padsize, 0
-      str.copy_from self, 0, @num_bytes, padsize
-    when :left
-      pad = String.pattern padsize, padstr
-      str.copy_from self, 0, @num_bytes, 0
-      str.copy_from pad, 0, padsize, @num_bytes
-    when :center
-      half = padsize / 2.0
-      lsize = half.floor
-      rsize = half.ceil
-      lpad = String.pattern lsize, padstr
-      rpad = String.pattern rsize, padstr
-      str.copy_from lpad, 0, lsize, 0
-      str.copy_from self, 0, @num_bytes, lsize
-      str.copy_from rpad, 0, rsize, lsize + @num_bytes
-    end
-
-    str
-  end
-
   # Unshares shared strings.
   def modify!
     Rubinius.check_frozen
@@ -1070,81 +939,6 @@ class String
     [match, str]
   end
   private :subpattern
-
-  def subpattern_set(pattern, capture, replacement)
-    unless match = pattern.match(self)
-      raise IndexError, "regexp not matched"
-    end
-
-    raise IndexError, "index #{capture} out of regexp" if capture >= match.size
-
-    if capture < 0
-      raise IndexError, "index #{capture} out of regexp" if -capture >= match.size
-      capture += match.size
-    end
-
-    start  = match.begin(capture)
-    length = match.end(capture) - start
-    splice! start, length, replacement
-  end
-
-  def splice!(start, count, replacement)
-    if start < 0
-      start += @num_bytes
-
-      if start < 0 or start > @num_bytes
-        raise IndexError, "index #{start} out of string"
-      end
-    elsif start > @num_bytes
-      raise IndexError, "index #{start} out of string"
-    end
-
-    raise IndexError, "negative length #{count}" if count < 0
-
-    modify!
-
-    replacement = StringValue replacement
-
-    # Clamp count to the end of the string
-    count = @num_bytes - start if start + count > @num_bytes
-
-    rsize = replacement.size
-
-    if rsize == 0
-      trailer_start = start + count
-      trailer_size =  @num_bytes - trailer_start
-
-      copy_from self, trailer_start, trailer_size, start
-      self.num_bytes -= count
-    else
-      # Resize if necessary
-      new_size = @num_bytes - count + rsize
-      # We use >= here and not > so we don't use every byte for
-      # @data. We always want to have at least 1 character room
-      # in a ByteArray for creating a \0 terminated string.
-      resize_capacity new_size if new_size >= @data.size
-
-      # easy, fits right in.
-      if count == rsize
-        copy_from replacement, 0, rsize, start
-      else
-        # shift the bytes on the end in or out
-        trailer_start = start + count
-        trailer_size =  @num_bytes - trailer_start
-
-        copy_from self, trailer_start, trailer_size, start + rsize
-
-        # Then put the replacement in
-        copy_from replacement, 0, rsize, start
-
-        self.num_bytes += (rsize - count)
-      end
-    end
-
-    taint if replacement.tainted?
-
-    self
-  end
 
   def prefix?(other)
     size = other.size

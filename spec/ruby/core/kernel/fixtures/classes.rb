@@ -110,6 +110,12 @@ module KernelSpecs
     alias aliased_pub_method pub_method
   end
 
+  class VisibilityChange
+    class << self
+      private :new
+    end
+  end
+
   class Binding
     @@super_secret = "password"
 
@@ -255,6 +261,18 @@ module KernelSpecs
 
     def initialize_copy(other)
       ScratchPad.record object_id
+    end
+  end
+
+  class Clone
+    def initialize_clone(other)
+      ScratchPad.record other.object_id
+    end
+  end
+
+  class Dup
+    def initialize_dup(other)
+      ScratchPad.record other.object_id
     end
   end
 

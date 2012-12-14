@@ -3,14 +3,11 @@
 class String
   include Enumerable
 
-  def self.allocate
-    str = super()
-    str.__data__ = Rubinius::ByteArray.new(1)
-    str.num_bytes = 0
-    str
-  end
-
   alias_method :bytesize, :size
+
+  def inspect
+    "\"#{transform(Rubinius::CType::Printed, true)}\""
+  end
 
   def upto(stop, exclusive=false)
     stop = StringValue(stop)
@@ -158,7 +155,8 @@ class String
     end
 
     if start < 0
-      splice! last_alnum, 1, carry.chr + @data[last_alnum].chr
+      m = Rubinius::Mirror.reflect self
+      m.splice last_alnum, 1, carry.chr + @data[last_alnum].chr
     end
 
     return self
@@ -608,81 +606,248 @@ class String
     return match_data
   end
 
-  def []=(index, replacement, three=undefined)
-    unless three.equal?(undefined)
-      if index.kind_of? Regexp
-        subpattern_set index,
-                       Rubinius::Type.coerce_to(replacement, Integer, :to_int),
-                       three
-      else
-        start = Rubinius::Type.coerce_to(index, Integer, :to_int)
-        fin =   Rubinius::Type.coerce_to(replacement, Integer, :to_int)
-
-        splice! start, fin, three
-      end
-
-      return three
+  def []=(index, count_or_replacement, replacement=undefined)
+    if replacement.equal? undefined
+      replacement = count_or_replacement
+      count = nil
+    else
+      count = count_or_replacement
     end
 
     case index
     when Fixnum
-      # Handle this first because it's the most common.
-      # This is duplicated from the else branch, but don't dry it up.
-      if index < 0
-        index += @num_bytes
+      index += @num_bytes if index < 0
+
+      if count
+        if index < 0 or index > @num_bytes
+          raise IndexError, "index #{index} out of string"
+        end
+
+        count = Rubinius::Type.coerce_to count, Fixnum, :to_int
+
+        if count < 0
+          raise IndexError, "count is negative"
+        end
+
+        count = @num_bytes - index if index + count >= @num_bytes
+      else
         if index < 0 or index >= @num_bytes
           raise IndexError, "index #{index} out of string"
         end
-      else
-        raise IndexError, "index #{index} out of string" if index >= @num_bytes
       end
 
-      if replacement.kind_of?(Fixnum)
+      if not count and replacement.kind_of? Fixnum
         modify!
         @data[index] = replacement
       else
-        splice! index, 1, replacement
+        replacement = StringValue replacement
+
+        m = Rubinius::Mirror.reflect self
+        m.splice index, count || 1, replacement
       end
-    when Regexp
-      subpattern_set index, 0, replacement
     when String
       unless start = self.index(index)
         raise IndexError, "string not matched"
       end
 
-      splice! start, index.length, replacement
+      replacement = StringValue replacement
+
+      m = Rubinius::Mirror.reflect self
+      m.splice start, index.bytesize, replacement
     when Range
-      start   = Rubinius::Type.coerce_to(index.first, Integer, :to_int)
-      length  = Rubinius::Type.coerce_to(index.last, Integer, :to_int)
+      start = Rubinius::Type.coerce_to index.first, Fixnum, :to_int
 
       start += @num_bytes if start < 0
 
-      return nil if start < 0 || start > @num_bytes
-
-      length = @num_bytes if length > @num_bytes
-      length += @num_bytes if length < 0
-      length += 1 unless index.exclude_end?
-
-      length = length - start
-      length = 0 if length < 0
-
-      splice! start, length, replacement
-    else
-      index = Rubinius::Type.coerce_to(index, Integer, :to_int)
-      raise IndexError, "index #{index} out of string" if @num_bytes <= index
-
-      if index < 0
-        raise IndexError, "index #{index} out of string" if -index > @num_bytes
-        index += @num_bytes
+      if start < 0 or start > @num_bytes
+        raise RangeError, "#{index.first} is out of range"
       end
 
-      if replacement.kind_of?(Fixnum)
-        modify!
-        @data[index] = replacement
+      stop = Rubinius::Type.coerce_to index.last, Fixnum, :to_int
+      stop += @num_bytes if stop < 0
+      stop -= 1 if index.exclude_end?
+
+      if stop < start
+        bytes = 0
+      elsif stop >= @num_bytes
+        bytes = @num_bytes - start
       else
-        splice! index, 1, replacement
+        bytes = stop + 1 - start
+      end
+
+      replacement = StringValue replacement
+
+      m = Rubinius::Mirror.reflect self
+      m.splice start, bytes, replacement
+    when Regexp
+      if count
+        count = Rubinius::Type.coerce_to count, Fixnum, :to_int
+      else
+        count = 0
+      end
+
+      if match = index.match(self)
+        ms = match.size
+      else
+        raise IndexError, "regexp does not match"
+      end
+
+      count += ms if count < 0 and -count < ms
+      unless count < ms and count >= 0
+        raise IndexError, "index #{count} out of match bounds"
+      end
+
+      replacement = StringValue replacement
+
+      m = Rubinius::Mirror.reflect self
+      bi = m.byte_index match.begin(count)
+      bs = m.byte_index(match.end(count)) - bi
+
+      m.splice bi, bs, replacement
+    else
+      index = Rubinius::Type.coerce_to index, Fixnum, :to_int
+
+      if count
+        return self[index, count] = replacement
+      else
+        return self[index] = replacement
       end
     end
+
+    Rubinius::Type.infect self, replacement
+
     return replacement
+  end
+
+  def center(width, padstr = " ")
+    justify width, :center, padstr
+  end
+
+  def ljust(width, padstr=" ")
+    justify(width, :left, padstr)
+  end
+
+  def rjust(width, padstr = " ")
+    justify(width, :right, padstr)
+  end
+
+  def justify(width, direction, padstr=" ")
+    padstr = StringValue(padstr)
+    raise ArgumentError, "zero width padding" if padstr.size == 0
+
+    width = Rubinius::Type.coerce_to width, Fixnum, :to_int
+    if width > @num_bytes
+      padsize = width - @num_bytes
+    else
+      return dup
+    end
+
+    str = self.class.pattern(1, "\0") * (padsize + @num_bytes)
+    str.taint if tainted? or padstr.tainted?
+    m = Rubinius::Mirror.reflect str
+
+    case direction
+    when :right
+      pad = String.pattern padsize, padstr
+      m.copy_from pad, 0, padsize, 0
+      m.copy_from self, 0, @num_bytes, padsize
+    when :left
+      pad = String.pattern padsize, padstr
+      m.copy_from self, 0, @num_bytes, 0
+      m.copy_from pad, 0, padsize, @num_bytes
+    when :center
+      half = padsize / 2.0
+      lsize = half.floor
+      rsize = half.ceil
+      lpad = String.pattern lsize, padstr
+      rpad = String.pattern rsize, padstr
+      m.copy_from lpad, 0, lsize, 0
+      m.copy_from self, 0, @num_bytes, lsize
+      m.copy_from rpad, 0, rsize, lsize + @num_bytes
+    end
+
+    str
+  end
+
+  def index(needle, offset=0)
+    offset = Rubinius::Type.coerce_to offset, Integer, :to_int
+    offset = @num_bytes + offset if offset < 0
+
+    return nil if offset < 0 || offset > @num_bytes
+
+    needle = needle.to_str if !needle.instance_of?(String) && needle.respond_to?(:to_str)
+
+    # What are we searching for?
+    case needle
+    when Fixnum
+      return nil if needle > 255 or needle < 0
+      return find_string(needle.chr, offset)
+    when String
+      return offset if needle == ""
+
+      needle_size = needle.size
+
+      max = @num_bytes - needle_size
+      return if max < 0 # <= 0 maybe?
+
+      return find_string(needle, offset)
+    when Regexp
+      if match = needle.match_from(self, offset)
+        Regexp.last_match = match
+        return match.begin(0)
+      else
+        Regexp.last_match = nil
+      end
+    else
+      raise TypeError, "type mismatch: #{needle.class} given"
+    end
+
+    return nil
+  end
+
+  def rindex(sub, finish=undefined)
+    if finish.equal?(undefined)
+      finish = size
+    else
+      finish = Rubinius::Type.coerce_to(finish, Integer, :to_int)
+      finish += @num_bytes if finish < 0
+      return nil if finish < 0
+      finish = @num_bytes if finish >= @num_bytes
+    end
+
+    case sub
+    when Fixnum
+      if finish == size
+        return nil if finish == 0
+        finish -= 1
+      end
+
+      begin
+        str = sub.chr
+      rescue RangeError
+        return nil
+      end
+
+      return find_string_reverse(str, finish)
+
+    when Regexp
+      match_data = sub.search_region(self, 0, finish, false)
+      Regexp.last_match = match_data
+      return match_data.begin(0) if match_data
+
+    else
+      needle = StringValue(sub)
+      needle_size = needle.size
+
+      # needle is bigger that haystack
+      return nil if size < needle_size
+
+      # Boundary case
+      return finish if needle_size == 0
+
+      return find_string_reverse(needle, finish)
+    end
+
+    return nil
   end
 end

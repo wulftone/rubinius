@@ -22,7 +22,7 @@ namespace rubinius {
     }
 
     ManagedThread* thread() {
-      return (ManagedThread*)vm_;
+      return static_cast<ManagedThread*>(vm_);
     }
 
     Object* raise_exception(Exception* exc) {
@@ -60,7 +60,7 @@ namespace rubinius {
 
     template <class T>
       T* new_object(Class *cls) {
-        return reinterpret_cast<T*>(vm_->new_object_typed(cls, sizeof(T), T::type));
+        return static_cast<T*>(vm_->new_object_typed(cls, sizeof(T), T::type));
       }
 
     ThreadState* thread_state() {
@@ -90,11 +90,14 @@ namespace rubinius {
 
     bool check_stack(CallFrame* call_frame, void* end) {
       // @TODO assumes stack growth direction
-      if(unlikely(reinterpret_cast<uintptr_t>(end) < vm_->stack_limit_)) {
-        raise_stack_error(call_frame);
-        return false;
+      if(vm_->stack_limit_ == vm_->stack_start_) {
+        vm_->reset_stack_limit();
+      } else {
+        if(unlikely(reinterpret_cast<uintptr_t>(end) < vm_->stack_limit_)) {
+          raise_stack_error(call_frame);
+          return false;
+        }
       }
-
       return true;
     }
 

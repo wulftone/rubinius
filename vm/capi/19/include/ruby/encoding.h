@@ -13,8 +13,10 @@ typedef OnigEncodingType rb_encoding;
 #define ENCODING_INLINE_MAX 1023
 #define ENCODING_GET_INLINED(obj)   rb_enc_get_index(obj)
 
-#define ENC_CODERANGE_UNKNOWN	      0
-#define ENC_CODERANGE_7BIT	        1
+#define ENC_CODERANGE_UNKNOWN       0
+#define ENC_CODERANGE_7BIT          1
+#define ENC_CODERANGE_VALID         2
+#define ENC_CODERANGE_BROKEN        4
 
 #define MBCLEN_CHARFOUND_P(ret)     ONIGENC_MBCLEN_CHARFOUND_P(ret)
 
@@ -105,6 +107,10 @@ int rb_enc_str_coderange(VALUE);
 VALUE rb_external_str_new_with_enc(const char *ptr, long len, rb_encoding *);
 VALUE rb_str_export_to_enc(VALUE, rb_encoding *);
 VALUE rb_str_conv_enc(VALUE str, rb_encoding *from, rb_encoding *to);
+VALUE rb_str_conv_enc_opts(VALUE str, rb_encoding *from, rb_encoding *to, int ecflags, VALUE ecopts);
+
+
+VALUE rb_str_encode(VALUE str, VALUE to, int ecflags, VALUE ecopts);
 
 void rb_declare_transcoder(const char* from, const char* to, const char* lib);
 void rb_register_transcoder(const rb_transcoder* trans);

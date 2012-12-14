@@ -342,7 +342,7 @@ instruction push_local_depth(depth index) [ -- value ]
       RUN_EXCEPTION();
     }
 
-    stack_push(scope->get_local(index));
+    stack_push(scope->get_local(state, index));
   }
 end
 
@@ -496,11 +496,7 @@ end
 #   pop_unwind
 
 instruction setup_unwind(ip type) [ -- ] => handler
-  interp_assert(current_unwind < kMaxUnwindInfos);
-  UnwindInfo& info = unwinds[current_unwind++];
-  info.target_ip = ip;
-  info.stack_depth = stack_calculate_sp();
-  info.type = (UnwindType)type;
+  unwinds.push(ip, stack_calculate_sp(), (UnwindType)type);
 end
 
 # [Description]
@@ -512,11 +508,11 @@ end
 #   setup_unwind
 
 instruction pop_unwind() [ -- ]
-  if(current_unwind <= 0) {
+  if(!unwinds.has_unwinds()) {
     Exception::internal_error(state, call_frame, "unbalanced pop_unwind");
     RUN_EXCEPTION();
   }
-  --current_unwind;
+  unwinds.drop();
 end
 
 # [Description]
@@ -1547,7 +1543,10 @@ instruction string_build(count) [ +count -- string ]
     /* We had to set the size of the result String before every Encoding check
      * so we have to set it to the final size here.
      */
-    if(check_encoding) str->num_bytes(state, Fixnum::from(size));
+    if(check_encoding) {
+      str->num_bytes(state, Fixnum::from(size));
+      str->ascii_only(state, cNil);
+    }
     if(!enc->nil_p()) str->encoding(state, enc);
   }
 
@@ -2227,7 +2226,7 @@ instruction invoke_primitive(literal count) [ +count -- value ]
 end
 
 # [Description]
-#   Pushes the top-level global `Rubinius` constant onto the stack.  Generally
+#   Pushes the top-level global `Rubinius` constant onto the stack. Generally
 #   this is done to call a utility method.
 
 instruction push_rubinius() [ -- constant ]
@@ -2288,7 +2287,16 @@ instruction meta_to_s(literal) [ object -- string ] => send
   }
 end
 
+# [Description]
+#   Pushes the distinguished module `Rubinius::Type` onto the stack.
+
 instruction push_type() [ -- constant ]
   stack_push(G(type));
 end
 
+# [Description]
+#   Pushes the distinguished class `Rubinius::Mirror` onto the stack.
+
+instruction push_mirror() [ -- constant ]
+  stack_push(G(mirror));
+end

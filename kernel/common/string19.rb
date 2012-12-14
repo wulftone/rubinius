@@ -1,14 +1,6 @@
 # -*- encoding: us-ascii -*-
 
 class String
-  def self.allocate
-    str = super()
-    str.__data__ = Rubinius::ByteArray.new(1)
-    str.num_bytes = 0
-    str.force_encoding(Encoding::BINARY)
-    str
-  end
-
   def self.try_convert(obj)
     Rubinius::Type.try_convert obj, String, :to_str
   end
@@ -25,25 +17,67 @@ class String
   def encode!(to=undefined, from=undefined, options=undefined)
     Rubinius.check_frozen
 
-    # TODO
-    if to.equal? undefined
-      to = Encoding.default_internal
-      return self unless to
+    case to
+    when Encoding
+      to_enc = to
+    when Hash
+      options = to
+      to_enc = Encoding.default_internal
+    when undefined
+      to_enc = Encoding.default_internal
     else
-      to = Rubinius::Type.coerce_to_encoding to
-    end
+      opts = Rubinius::Type::check_convert_type to, Hash, :to_hash
 
-    if options.equal?(undefined)
-      if from.is_a?(Hash)
-        options = from
+      if opts
+        options = opts
+        to_enc = Encoding.default_internal
       else
-        options = {}
+        to_enc = Rubinius::Type.try_convert_to_encoding to
       end
     end
 
-    force_encoding to
+    case from
+    when undefined
+      from_enc = encoding
+    when Encoding
+      from_enc = from
+    when Hash
+      options = from
+      from_enc = encoding
+    else
+      opts = Rubinius::Type::check_convert_type from, Hash, :to_hash
 
-    case xml = options[:xml]
+      if opts
+        options = opts
+        from_enc = encoding
+      else
+        from_enc = Rubinius::Type.coerce_to_encoding from
+      end
+    end
+
+    if from_enc.equal? undefined or to_enc.equal? undefined
+      raise Encoding::ConverterNotFoundError, "undefined code converter (#{from} to #{to})"
+    end
+
+    case options
+    when undefined
+      options = 0
+    when Hash
+      # do nothing
+    else
+      options = Rubinius::Type.coerce_to options, Hash, :to_hash
+    end
+
+    if ascii_only? and to_enc.ascii_compatible?
+      force_encoding to_enc
+    elsif to_enc and from_enc != to_enc
+      ec = Encoding::Converter.new from_enc, to_enc, options
+      replace ec.convert(self)
+    end
+
+    # TODO: replace this hack with transcoders
+    if options.kind_of? Hash
+      case xml = options[:xml]
       when :text
         gsub!(/[&><]/, '&' => '&amp;', '>' => '&gt;', '<' => '&lt;')
       when :attr
@@ -54,13 +88,14 @@ class String
         # nothing
       else
         raise ArgumentError, "unexpected value for xml option: #{xml.inspect}"
+      end
     end
 
     self
   end
 
   def encode(to=undefined, from=undefined, options=undefined)
-    dup.encode!(to, from, options)
+    dup.encode! to, from, options
   end
 
   def force_encoding(enc)
@@ -69,8 +104,148 @@ class String
     self
   end
 
+  def inspect
+    result_encoding = Encoding.default_internal || Encoding.default_external
+    unless result_encoding.ascii_compatible?
+      result_encoding = Encoding::US_ASCII
+    end
+
+    enc = encoding
+    ascii = enc.ascii_compatible?
+    enc_name = enc.name
+    unicode = enc_name.start_with?("UTF-") && enc_name[4] != ?7
+
+    if unicode
+      if enc.equal? Encoding::UTF_16
+        a = getbyte 0
+        b = getbyte 1
+
+        if a == 0xfe and b == 0xff
+          enc = Encoding::UTF_16BE
+        elsif a == 0xff and b == 0xfe
+          enc = Encoding::UTF_16LE
+        else
+          unicode = false
+        end
+      elsif enc.equal? Encoding::UTF_32
+        a = getbyte 0
+        b = getbyte 1
+        c = getbyte 2
+        d = getbyte 3
+
+        if a == 0 and b == 0 and c == 0xfe and d == 0xfe
+          enc = Encoding::UTF_32BE
+        elsif a == 0xff and b == 0xfe and c == 0 and d == 0
+          enc = Encoding::UTF_32LE
+        else
+          unicode = false
+        end
+      end
+    end
+
+    array = []
+
+    index = 0
+    total = bytesize
+    while index < total
+      char = chr_at index
+
+      if char
+        bs = char.bytesize
+
+        if (ascii or unicode) and bs == 1
+          escaped = nil
+
+          byte = getbyte(index)
+          if byte >= 7 and byte <= 92
+            case byte
+            when 7  # \a
+              escaped = '\a'
+            when 8  # \b
+              escaped = '\b'
+            when 9  # \t
+              escaped = '\t'
+            when 10 # \n
+              escaped = '\n'
+            when 11 # \v
+              escaped = '\v'
+            when 12 # \f
+              escaped = '\f'
+            when 13 # \r
+              escaped = '\r'
+            when 27 # \e
+              escaped = '\e'
+            when 34 # \"
+              escaped = '\"'
+            when 35 # #
+              case getbyte(index += 1)
+              when 36   # $
+                escaped = '\#$'
+              when 64   # @
+                escaped = '\#@'
+              when 123  # {
+                escaped = '\#{'
+              else
+                index -= 1
+              end
+            when 92 # \\
+              escaped = '\\\\'
+            end
+
+            if escaped
+              array << escaped
+              index += 1
+              next
+            end
+          end
+        end
+
+        if char.printable?
+          array << char
+        else
+          code = char.ord
+          escaped = code.to_s(16).upcase
+
+          if unicode
+            if code < 0x10000
+              pad = "0" * (4 - escaped.bytesize)
+              array << "\\u#{pad}#{escaped}"
+            else
+              array << "\\u{#{escaped}}"
+            end
+          else
+            if code < 0x100
+              pad = "0" * (2 - escaped.bytesize)
+              array << "\\x#{pad}#{escaped}"
+            else
+              array << "\\x{#{escaped}}"
+            end
+          end
+        end
+
+        index += bs
+      else
+        array << "\\x#{getbyte(index).to_s(16)}"
+        index += 1
+      end
+    end
+
+    size = array.inject(0) { |s, chr| s += chr.bytesize }
+    result = String.pattern size + 2, ?".ord
+    m = Rubinius::Mirror.reflect result
+
+    index = 1
+    array.each do |chr|
+      m.copy_from chr, 0, chr.bytesize, index
+      index += chr.bytesize
+    end
+
+    Rubinius::Type.infect result, self
+    result.force_encoding result_encoding
+  end
+
   def prepend(other)
-    self[0,0] = other
+    self[0, 0] = other
     self
   end
 
@@ -237,7 +412,8 @@ class String
     end
 
     if start < 0
-      splice! last_alnum, 1, carry.chr + @data[last_alnum].chr
+      m = Rubinius::Mirror.reflect self
+      m.splice last_alnum, 1, carry.chr + @data[last_alnum].chr
     end
 
     return self
@@ -380,6 +556,12 @@ class String
     end
 
     return self
+  end
+
+  def clear
+    Rubinius.check_frozen
+    self.num_bytes = 0
+    self
   end
 
   def replace(other)
@@ -733,81 +915,349 @@ class String
     end
   end
 
-  def []=(index, replacement, three=undefined)
-    unless three.equal?(undefined)
-      if index.kind_of? Regexp
-        subpattern_set index,
-                       Rubinius::Type.coerce_to(replacement, Integer, :to_int),
-                       three
-      else
-        start = Rubinius::Type.coerce_to(index, Integer, :to_int)
-        fin =   Rubinius::Type.coerce_to(replacement, Integer, :to_int)
-
-        splice! start, fin, three
-      end
-
-      return three
+  def []=(index, count_or_replacement, replacement=undefined)
+    if replacement.equal? undefined
+      replacement = count_or_replacement
+      count = nil
+    else
+      count = count_or_replacement
     end
+
+    m = Rubinius::Mirror.reflect self
 
     case index
     when Fixnum
-      # Handle this first because it's the most common.
-      # This is duplicated from the else branch, but don't dry it up.
-      if index < 0
-        index += @num_bytes
-        if index < 0 or index >= @num_bytes
-          raise IndexError, "index #{index} out of string"
-        end
-      else
-        raise IndexError, "index #{index} out of string" if index > @num_bytes
+      index += size if index < 0
+
+      if index < 0 or index > size
+        raise IndexError, "index #{index} out of string"
       end
 
-      if replacement.kind_of?(Fixnum)
-        modify!
-        @data[index] = replacement
-      else
-        splice! index, 1, replacement
+      unless bi = m.byte_index(index)
+        raise IndexError, "unable to find character at: #{index}"
       end
-    when Regexp
-      subpattern_set index, 0, replacement
+
+      if count
+        count = Rubinius::Type.coerce_to count, Fixnum, :to_int
+
+        if count < 0
+          raise IndexError, "count is negative"
+        end
+
+        total = index + count
+        if total >= size
+          bs = bytesize - bi
+        else
+          bs = m.byte_index(total) - bi
+        end
+      else
+        bs = index == size ? 0 : m.byte_index(index + 1) - bi
+      end
+
+      replacement = StringValue replacement
+      enc = Rubinius::Type.compatible_encoding self, replacement
+
+      m.splice bi, bs, replacement
     when String
-      unless start = self.index(index)
+      unless start = m.byte_index(index)
         raise IndexError, "string not matched"
       end
 
-      splice! start, index.length, replacement
+      replacement = StringValue replacement
+      enc = Rubinius::Type.compatible_encoding self, replacement
+
+      m.splice start, index.bytesize, replacement
     when Range
-      start   = Rubinius::Type.coerce_to(index.first, Integer, :to_int)
-      length  = Rubinius::Type.coerce_to(index.last, Integer, :to_int)
+      start = Rubinius::Type.coerce_to index.first, Fixnum, :to_int
 
-      start += @num_bytes if start < 0
+      start += size if start < 0
 
-      return nil if start < 0 || start > @num_bytes
-
-      length = @num_bytes if length > @num_bytes
-      length += @num_bytes if length < 0
-      length += 1 unless index.exclude_end?
-
-      length = length - start
-      length = 0 if length < 0
-
-      splice! start, length, replacement
-    else
-      index = Rubinius::Type.coerce_to(index, Integer, :to_int)
-      raise IndexError, "index #{index} out of string" if @num_bytes <= index
-
-      if index < 0
-        raise IndexError, "index #{index} out of string" if -index > @num_bytes
-        index += @num_bytes
+      if start < 0 or start > size
+        raise RangeError, "#{index.first} is out of range"
       end
 
-      if replacement.kind_of?(Fixnum)
-        modify!
-        @data[index] = replacement
+      unless bi = m.byte_index(start)
+        raise IndexError, "unable to find character at: #{start}"
+      end
+
+      stop = Rubinius::Type.coerce_to index.last, Fixnum, :to_int
+      stop += size if stop < 0
+      stop -= 1 if index.exclude_end?
+
+      if stop < start
+        bs = 0
+      elsif stop >= size
+        bs = bytesize - bi
       else
-        splice! index, 1, replacement
+        bs = m.byte_index(stop + 1) - bi
+      end
+
+      replacement = StringValue replacement
+      enc = Rubinius::Type.compatible_encoding self, replacement
+
+      m.splice bi, bs, replacement
+    when Regexp
+      if count
+        count = Rubinius::Type.coerce_to count, Fixnum, :to_int
+      else
+        count = 0
+      end
+
+      if match = index.match(self)
+        ms = match.size
+      else
+        raise IndexError, "regexp does not match"
+      end
+
+      count += ms if count < 0 and -count < ms
+      unless count < ms and count >= 0
+        raise IndexError, "index #{count} out of match bounds"
+      end
+
+      replacement = StringValue replacement
+      enc = Rubinius::Type.compatible_encoding self, replacement
+
+      bi = m.byte_index match.begin(count)
+      bs = m.byte_index(match.end(count)) - bi
+
+      m.splice bi, bs, replacement
+    else
+      index = Rubinius::Type.coerce_to index, Fixnum, :to_int
+
+      if count
+        return self[index, count] = replacement
+      else
+        return self[index] = replacement
       end
     end
+
+    Rubinius::Type.infect self, replacement
+    force_encoding enc
+
     return replacement
   end
+
+  def center(width, padding=" ")
+    padding = StringValue(padding)
+    raise ArgumentError, "zero width padding" if padding.size == 0
+
+    enc = Rubinius::Type.compatible_encoding self, padding
+
+    width = Rubinius::Type.coerce_to width, Fixnum, :to_int
+    return dup if width <= size
+
+    width -= size
+    left = width / 2
+
+    bs = bytesize
+    pbs = padding.bytesize
+
+    if pbs > 1
+      ps = padding.size
+      pm = Rubinius::Mirror.reflect padding
+
+      x = left / ps
+      y = left % ps
+
+      lpbi = pm.byte_index(y)
+      lbytes = x * pbs + lpbi
+
+      right = left + (width & 0x1)
+
+      x = right / ps
+      y = right % ps
+
+      rpbi = pm.byte_index(y)
+      rbytes = x * pbs + rpbi
+
+      pad = self.class.pattern rbytes, padding
+      str = self.class.pattern lbytes + bs + rbytes, ""
+      m = Rubinius::Mirror.reflect str
+
+      m.copy_from self, 0, bs, lbytes
+      m.copy_from pad, 0, lbytes, 0
+      m.copy_from pad, 0, rbytes, lbytes + bs
+    else
+      str = self.class.pattern width + bs, padding
+      m = Rubinius::Mirror.reflect str
+      m.copy_from self, 0, bs, left
+    end
+
+    str.taint if tainted? or padding.tainted?
+    str.force_encoding enc
+  end
+
+  def ljust(width, padding=" ")
+    padding = StringValue(padding)
+    raise ArgumentError, "zero width padding" if padding.size == 0
+
+    enc = Rubinius::Type.compatible_encoding self, padding
+
+    width = Rubinius::Type.coerce_to width, Fixnum, :to_int
+    return dup if width <= size
+
+    width -= size
+
+    bs = bytesize
+    pbs = padding.bytesize
+
+    if pbs > 1
+      ps = padding.size
+      pm = Rubinius::Mirror.reflect padding
+
+      x = width / ps
+      y = width % ps
+
+      pbi = pm.byte_index(y)
+      bytes = x * pbs + pbi
+
+      str = self.class.pattern bytes + bs, self
+      m = Rubinius::Mirror.reflect str
+
+      i = 0
+      bi = bs
+
+      while i < x
+        m.copy_from padding, 0, pbs, bi
+
+        bi += pbs
+        i += 1
+      end
+
+      m.copy_from padding, 0, pbi, bi
+    else
+      str = self.class.pattern width + bs, padding
+      m = Rubinius::Mirror.reflect str
+
+      m.copy_from self, 0, bs, 0
+    end
+
+    str.taint if tainted? or padding.tainted?
+    str.force_encoding enc
+  end
+
+  def rjust(width, padding=" ")
+    padding = StringValue(padding)
+    raise ArgumentError, "zero width padding" if padding.size == 0
+
+    enc = Rubinius::Type.compatible_encoding self, padding
+
+    width = Rubinius::Type.coerce_to width, Fixnum, :to_int
+    return dup if width <= size
+
+    width -= size
+
+    bs = bytesize
+    pbs = padding.bytesize
+
+    if pbs > 1
+      ps = padding.size
+      pm = Rubinius::Mirror.reflect padding
+
+      x = width / ps
+      y = width % ps
+
+      bytes = x * pbs + pm.byte_index(y)
+    else
+      bytes = width
+    end
+
+    str = self.class.pattern bytes + bs, padding
+    m = Rubinius::Mirror.reflect str
+
+    m.copy_from self, 0, bs, bytes
+
+    str.taint if tainted? or padding.tainted?
+    str.force_encoding enc
+  end
+
+  def index(str, start=undefined)
+    if start.equal? undefined
+      start = 0
+    else
+      start = Rubinius::Type.coerce_to start, Fixnum, :to_int
+
+      start += size if start < 0
+      return if start < 0 or start > size
+    end
+
+    if str.kind_of? Regexp
+      Rubinius::Type.compatible_encoding self, str
+
+      m = Rubinius::Mirror.reflect self
+      start = m.character_to_byte_index start
+      if match = str.match_from(self, start)
+        Regexp.last_match = match
+        return match.begin(0)
+      else
+        Regexp.last_match = nil
+        return
+      end
+    end
+
+    str = StringValue(str)
+    return start if str == ""
+
+    Rubinius::Type.compatible_encoding self, str
+
+    return if str.size > size
+
+    m = Rubinius::Mirror.reflect self
+    m.character_index str, start
+  end
+
+  def rindex(sub, finish=undefined)
+    if finish.equal?(undefined)
+      finish = size
+    else
+      finish = Rubinius::Type.coerce_to(finish, Integer, :to_int)
+      finish += size if finish < 0
+      return nil if finish < 0
+      finish = size if finish >= size
+    end
+
+    m = Rubinius::Mirror.reflect self
+    byte_finish = m.character_to_byte_index finish
+
+    case sub
+    when Fixnum
+      if finish == size
+        return nil if finish == 0
+        finish -= 1
+      end
+
+      begin
+        str = sub.chr
+      rescue RangeError
+        return nil
+      end
+
+      return find_string_reverse(str, byte_finish)
+
+    when Regexp
+      Rubinius::Type.compatible_encoding self, sub
+
+      match_data = sub.search_region(self, 0, byte_finish, false)
+      Regexp.last_match = match_data
+      return match_data.begin(0) if match_data
+
+    else
+      needle = StringValue(sub)
+      needle_size = needle.size
+
+      # needle is bigger that haystack
+      return nil if size < needle_size
+
+      # Boundary case
+      return finish if needle_size == 0
+
+      Rubinius::Type.compatible_encoding self, needle
+      if byte_index = find_string_reverse(needle, byte_finish)
+        return m.byte_to_character_index byte_index
+      end
+    end
+
+    return nil
+  end
+
 end

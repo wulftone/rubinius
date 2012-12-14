@@ -81,8 +81,8 @@ namespace rubinius {
       if(likely(obj)) {
         obj->init_header(self, YoungObjectZone, PackedObject::type);
       } else {
-        obj = reinterpret_cast<PackedObject*>(
-            state->memory()->new_object_fast(state, self, size, PackedObject::type));
+        obj = static_cast<PackedObject*>(
+            state->memory()->new_object_typed(state, self, size, PackedObject::type));
       }
 
       // Don't use 'this' !!! The above code might have GC'd
@@ -116,7 +116,7 @@ namespace rubinius {
             obj->init_header(self, YoungObjectZone, PackedObject::type);
           } else {
             obj = reinterpret_cast<PackedObject*>(
-                state->memory()->new_object_fast(state, self, size, PackedObject::type));
+                state->memory()->new_object_typed(state, self, size, PackedObject::type));
           }
         } else {
           return collect_and_allocate(state, gct, self, calling_environment);
@@ -135,7 +135,9 @@ namespace rubinius {
   }
 
   Object* Class::allocate(STATE, GCToken gct, CallFrame* calling_environment) {
-    if(type_info_->type == PackedObject::type) {
+    object_type obj_type = type_info_->type;
+
+    if(obj_type == PackedObject::type) {
       Object* new_obj = allocate_packed(state, gct, this, calling_environment);
 #ifdef RBX_ALLOC_TRACKING
       if(unlikely(state->vm()->allocation_tracking())) {
@@ -146,13 +148,13 @@ namespace rubinius {
     } else if(!type_info_->allow_user_allocate || kind_of<SingletonClass>(this)) {
       Exception::type_error(state, "direct allocation disabled");
       return cNil;
-    } else if(type_info_->type == Object::type) {
+    } else if(obj_type == Object::type) {
       // transition all normal object classes to PackedObject
       Class* self = this;
       OnStack<1> os(state, self);
 
       auto_pack(state, gct);
-      Object* new_obj = allocate_packed(state, gct, this, calling_environment);
+      Object* new_obj = allocate_packed(state, gct, self, calling_environment);
 #ifdef RBX_ALLOC_TRACKING
       if(unlikely(state->vm()->allocation_tracking())) {
         new_obj->setup_allocation_site(state, calling_environment);
@@ -163,7 +165,7 @@ namespace rubinius {
       // type_info_->type is neither PackedObject nor Object, so use the
       // generic path.
       Object* new_obj = state->vm()->new_object_typed(this,
-          type_info_->instance_size, type_info_->type);
+          type_info_->instance_size, obj_type);
 #ifdef RBX_ALLOC_TRACKING
       if(unlikely(state->vm()->allocation_tracking())) {
         new_obj->setup_allocation_site(state, calling_environment);
@@ -231,7 +233,7 @@ namespace rubinius {
     // If another thread did this work while we were waiting on the lock,
     // don't redo it.
     if(self->type_info_->type == PackedObject::type) {
-      hard_unlock(state, gct);
+      self->hard_unlock(state, gct);
       return;
     }
 
@@ -275,9 +277,10 @@ namespace rubinius {
       slots = lt->entries()->to_native();
     }
 
-    packed_size_ = sizeof(Object) + (slots * sizeof(Object*));
+    self->set_packed_size(sizeof(Object) + (slots * sizeof(Object*)));
     self->packed_ivar_info(state, lt);
 
+    atomic::memory_barrier();
     self->set_object_type(state, PackedObject::type);
 
     self->hard_unlock(state, gct);

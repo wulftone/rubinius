@@ -39,11 +39,14 @@ namespace rubinius {
     , ic_registry_(new InlineCacheRegistry)
     , class_count_(0)
     , thread_ids_(1)
+    , kcode_page_(kcode::eAscii)
+    , kcode_table_(kcode::null_table())
     , agent_(0)
     , root_vm_(0)
     , env_(env)
     , tool_broker_(new tooling::ToolBroker)
     , ruby_critical_set_(false)
+    , use_capi_lock_(false)
     , check_gc_(false)
     , om(0)
 
@@ -148,7 +151,7 @@ namespace rubinius {
         ++i) {
       if(VM* vm = (*i)->as_vm()) {
         Thread *thread = vm->thread.get();
-        if(!thread->signal_handler_thread_p() && CBOOL(thread->alive())) {
+        if(!thread->system_thread() && CBOOL(thread->alive())) {
           threads->append(state, thread);
         }
       }

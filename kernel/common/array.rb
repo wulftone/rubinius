@@ -667,40 +667,11 @@ class Array
     false
   end
 
-  def index(obj=undefined)
-    i = 0
-    if obj.equal? undefined
-      each do |x|
-        return i if yield(x)
-        i += 1
-      end
-    else
-      each do |x|
-        return i if x == obj
-        i += 1
-      end
-    end
-    nil
+  def find_index(obj=undefined)
+    super
   end
 
-  def indexes(*args)
-    warn 'Array#indexes is deprecated, use Array#values_at instead'
-
-    out = []
-
-    args.each do |a|
-      if a.kind_of? Range
-        out << self[a]
-      else
-        idx = Rubinius::Type.coerce_to(a, Fixnum, :to_int)
-        out << at(idx)
-      end
-    end
-
-    out
-  end
-
-  alias_method :indices, :indexes
+  alias_method :index, :find_index
 
   def last(n=undefined)
     if size < 1

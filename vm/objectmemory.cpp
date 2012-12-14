@@ -65,7 +65,7 @@ namespace rubinius {
   {
     // TODO Not sure where this code should be...
     if(char* num = getenv("RBX_WATCH")) {
-      object_watch = (Object*)strtol(num, NULL, 10);
+      object_watch = reinterpret_cast<Object*>(strtol(num, NULL, 10));
       std::cout << "Watching for " << object_watch << "\n";
     }
 
@@ -134,27 +134,30 @@ namespace rubinius {
   {
     utilities::thread::SpinLock::LockGuard guard(inflation_lock_);
 
-    // Inflation always happens with the ObjectMemory lock held, so we don't
-    // need to worry about another thread concurrently inflating it.
-    //
-    // But we do need to check that it's not already inflated.
-    if(obj->inflated_header_p()) return false;
+    HeaderWord orig = obj->header;
 
-    InflatedHeader* ih = inflated_headers_->allocate(obj);
-    ih->initialize_mutex(state->vm()->thread_id(), count);
-
-    if(!obj->set_inflated_header(state, ih)) {
-      if(obj->inflated_header_p()) return false;
-
-      // Now things are really in a weird state, just abort.
-      rubinius::bug("Massive header state confusion detected. Call a doctor.");
+    if(orig.f.inflated) {
+      return false;
     }
 
+    InflatedHeader* header = inflated_headers_->allocate(obj);
+    header->update(state, orig);
+    header->initialize_mutex(state->vm()->thread_id(), count);
+
+    while(!obj->set_inflated_header(state, header, orig)) {
+      orig = obj->header;
+
+      if(orig.f.inflated) {
+        return false;
+      }
+      header->update(state, orig);
+      header->initialize_mutex(state->vm()->thread_id(), count);
+    }
     return true;
   }
 
   LockStatus ObjectMemory::contend_for_lock(STATE, GCToken gct, ObjectHeader* obj,
-                                            bool* error, size_t us, bool interrupt)
+                                            size_t us, bool interrupt)
   {
     bool timed = false;
     bool timeout = false;
@@ -179,19 +182,25 @@ step1:
       // contention condvar until the object is unlocked.
 
       HeaderWord orig = obj->header;
-      HeaderWord new_val = orig;
+      orig.f.inflated = 0;
 
-      orig.f.meaning = eAuxWordLock;
-
+      HeaderWord new_val      = orig;
+      orig.f.meaning          = eAuxWordLock;
       new_val.f.LockContended = 1;
 
       if(!obj->header.atomic_set(orig, new_val)) {
+        if(obj->inflated_header_p()) {
+          if(cDebugThreading) {
+            std::cerr << "[LOCK " << state->vm()->thread_id()
+              << " contend_for_lock error: object has been inflated.]" << std::endl;
+          }
+          return eLockError;
+        }
         if(new_val.f.meaning != eAuxWordLock) {
           if(cDebugThreading) {
             std::cerr << "[LOCK " << state->vm()->thread_id()
               << " contend_for_lock error: not thin locked.]" << std::endl;
           }
-          *error = true;
           return eLockError;
         }
 
@@ -291,14 +300,14 @@ step1:
     int initial_count = 0;
 
     HeaderWord orig = obj->header;
-    HeaderWord tmp = orig;
+    HeaderWord new_val = orig;
 
-    if(tmp.f.inflated) {
+    if(orig.f.inflated) {
       // Already inflated. ERROR, let the caller sort it out.
       return false;
     }
 
-    switch(tmp.f.meaning) {
+    switch(new_val.f.meaning) {
     case eAuxWordEmpty:
       // ERROR, we can not be here because it's empty. This is only to
       // be called when the header is already in use.
@@ -307,11 +316,11 @@ step1:
       // We could be have made a header before trying again, so
       // keep using the original one.
       ih = inflated_headers_->allocate(obj);
-      ih->set_object_id(tmp.f.aux_word);
+      ih->set_object_id(new_val.f.aux_word);
       break;
     case eAuxWordLock:
       // We have to locking the object to inflate it, thats the law.
-      if(tmp.f.aux_word >> cAuxLockTIDShift != state->vm()->thread_id()) {
+      if(new_val.f.aux_word >> cAuxLockTIDShift != state->vm()->thread_id()) {
         return false;
       }
 
@@ -327,10 +336,10 @@ step1:
 
     ih->initialize_mutex(state->vm()->thread_id(), initial_count);
 
-    tmp.all_flags = ih;
-    tmp.f.inflated = 1;
+    new_val.all_flags = ih;
+    new_val.f.inflated = 1;
 
-    while(!obj->header.atomic_set(orig, tmp)) {
+    while(!obj->header.atomic_set(orig, new_val)) {
       // The header can't have been inflated by another thread, the
       // inflation process holds the OM lock.
       //
@@ -340,15 +349,19 @@ step1:
       // Sanity check that the meaning is still the same, if not, then
       // something is really wrong.
       orig = obj->header;
-      if(orig.f.meaning != tmp.f.meaning) {
+      if(orig.f.inflated) {
+        return false;
+      }
+      if(orig.f.meaning != new_val.f.meaning) {
         if(cDebugThreading) {
           std::cerr << "[LOCK object header consistence error detected.]" << std::endl;
         }
         return false;
       }
 
-      tmp.all_flags = ih;
-      tmp.f.inflated = 1;
+      new_val = orig;
+      new_val.all_flags = ih;
+      new_val.f.inflated = 1;
     }
 
     return true;
@@ -400,13 +413,13 @@ step1:
         break;
       }
 
-      ih->flags().LockContended = 0;
-
       new_val.all_flags = ih;
       new_val.f.inflated = 1;
 
       // Try it all over again if it fails.
       if(!obj->header.atomic_set(orig, new_val)) continue;
+
+      obj->clear_lock_contended();
 
       if(cDebugThreading) {
         std::cerr << "[LOCK " << state->vm()->thread_id() << " inflated lock for contention.]" << std::endl;
@@ -414,23 +427,6 @@ step1:
 
       // Now inflated but not locked, which is what we want.
       return true;
-    }
-  }
-
-  // WARNING: This returns an object who's body may not have been initialized.
-  // It is the callers duty to initialize it.
-  Object* ObjectMemory::new_object_fast(STATE, Class* cls, size_t bytes, object_type type) {
-    utilities::thread::SpinLock::LockGuard guard(allocation_lock_);
-
-    if(Object* obj = young_->raw_allocate(bytes, &collect_young_now)) {
-      gc_stats.young_object_allocated(bytes);
-
-      if(collect_young_now) shared_.gc_soon();
-      obj->init_header(cls, YoungObjectZone, type);
-      return obj;
-    } else {
-      allocation_lock_.unlock();
-      return new_object_typed(state, cls, bytes, type);
     }
   }
 
@@ -671,73 +667,56 @@ step1:
 
   }
 
-  InflatedHeader* ObjectMemory::inflate_header(STATE, ObjectHeader* obj) {
-    if(obj->inflated_header_p()) return obj->inflated_header();
-
-    utilities::thread::SpinLock::LockGuard guard(inflation_lock_);
-
-    // Gotta check again because while waiting for the lock,
-    // the object could have been inflated!
-    if(obj->inflated_header_p()) return obj->inflated_header();
-
-    InflatedHeader* header = inflated_headers_->allocate(obj);
-
-    if(!obj->set_inflated_header(state, header)) {
-      if(obj->inflated_header_p()) return obj->inflated_header();
-
-      // Now things are really in a weird state, just abort.
-      rubinius::bug("Massive header state confusion detected. Call a doctor.");
-    }
-
-    return header;
-  }
-
   void ObjectMemory::inflate_for_id(STATE, ObjectHeader* obj, uint32_t id) {
     utilities::thread::SpinLock::LockGuard guard(inflation_lock_);
 
     HeaderWord orig = obj->header;
 
     if(orig.f.inflated) {
-      rubinius::bug("Massive header state confusion detected. Call a doctor.");
+      obj->inflated_header()->set_object_id(id);
+      return;
     }
 
     InflatedHeader* header = inflated_headers_->allocate(obj);
-    header->set_handle(state, obj->handle(state));
+    header->update(state, orig);
     header->set_object_id(id);
 
-    if(!obj->set_inflated_header(state, header)) {
-      if(obj->inflated_header_p()) {
+    while(!obj->set_inflated_header(state, header, orig)) {
+      orig = obj->header;
+
+      if(orig.f.inflated) {
         obj->inflated_header()->set_object_id(id);
         return;
       }
-
-      // Now things are really in a weird state, just abort.
-      rubinius::bug("Massive header state confusion detected. Call a doctor.");
+      header->update(state, orig);
+      header->set_object_id(id);
     }
 
   }
 
   void ObjectMemory::inflate_for_handle(STATE, ObjectHeader* obj, capi::Handle* handle) {
-    SYNC(state);
+    utilities::thread::SpinLock::LockGuard guard(inflation_lock_);
 
     HeaderWord orig = obj->header;
 
     if(orig.f.inflated) {
-      rubinius::bug("Massive header state confusion detected. Call a doctor.");
+      obj->inflated_header()->set_handle(state, handle);
+      return;
     }
 
     InflatedHeader* header = inflated_headers_->allocate(obj);
+    header->update(state, orig);
     header->set_handle(state, handle);
-    header->set_object_id(obj->object_id());
 
-    if(!obj->set_inflated_header(state, header)) {
-      if(obj->inflated_header_p()) {
+    while(!obj->set_inflated_header(state, header, orig)) {
+      orig = obj->header;
+
+      if(orig.f.inflated) {
         obj->inflated_header()->set_handle(state, handle);
         return;
       }
-
-      // Now things are really in a weird state, just abort.
-      rubinius::bug("Massive header state confusion detected. Call a doctor.");
+      header->update(state, orig);
+      header->set_handle(state, handle);
     }
 
   }
@@ -991,6 +970,9 @@ step1:
     CallFrame* call_frame = 0;
     utilities::thread::Thread::set_os_name("rbx.finalizer");
 
+    GCTokenImpl gct;
+    state->vm()->thread->hard_unlock(state, gct);
+
     // Forever
     for(;;) {
       FinalizeObject* fi;
@@ -1044,8 +1026,6 @@ step1:
 
       fi->status = FinalizeObject::eFinalized;
     }
-
-    GCTokenImpl gct;
 
     state->checkpoint(gct, 0);
   }
@@ -1195,7 +1175,7 @@ step1:
 
   void ObjectMemory::start_finalizer_thread(STATE) {
     VM* vm = state->shared().new_vm();
-    Thread* thr = Thread::create(state, vm, G(thread), in_finalizer);
+    Thread* thr = Thread::create(state, vm, G(thread), in_finalizer, false, true);
     finalizer_thread_.set(thr);
     thr->fork(state);
   }

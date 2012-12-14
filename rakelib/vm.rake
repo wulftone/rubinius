@@ -109,7 +109,30 @@ field_extract_headers = %w[
   vm/builtin/call_unit_adapter.hpp
   vm/builtin/cache.hpp
   vm/builtin/atomic.hpp
+  vm/builtin/character.hpp
 ]
+
+transcoders_src_dir = File.expand_path "../../vendor/oniguruma/enc/trans", __FILE__
+
+libdir = "#{BUILD_CONFIG[:stagingdir] || BUILD_CONFIG[:sourcedir]}/#{BUILD_CONFIG[:libdir]}"
+transcoders_lib_dir = File.expand_path "#{libdir}/19/encoding/converter", __FILE__
+directory transcoders_lib_dir
+
+TRANSCODING_LIBS = []
+
+Dir["#{transcoders_src_dir}/*.c"].each do |name|
+  name.sub!(/\.c$/, ".#{$dlext}")
+  target = File.join transcoders_lib_dir, File.basename(name)
+
+  task name do
+  end
+
+  file target => name do |t|
+    cp t.prerequisites.first, t.name, :preserve => true, :verbose => $verbose
+  end
+
+  TRANSCODING_LIBS << target
+end
 
 ############################################################
 # Other Tasks
@@ -141,6 +164,7 @@ namespace :build do
                      build:ffi:preprocessor
                      compiler:generate
                      stage:bin
+                     stage:extra_bins
                      stage:capi_include
                      stage:lib
                      stage:tooling
@@ -148,8 +172,9 @@ namespace :build do
                      kernel:build
                      stage:runtime
                      stage:documentation
+                     stage:manpages
                      extensions
-                   ]
+                   ] + TRANSCODING_LIBS
 
   namespace :ffi do
 
@@ -200,24 +225,9 @@ file encoding_database => encoding_extract do |t|
   ruby encoding_extract, dir, t.name
 end
 
-transcoders_lib_dir = File.expand_path "../../lib/19/encoding/converter", __FILE__
-directory transcoders_lib_dir
-
 transcoders_extract = 'vm/codegen/transcoders_extract.rb'
 
-transcoders_src_dir = File.expand_path "../../vendor/oniguruma/enc/trans", __FILE__
-
-TRANSCODING_LIBS = []
-
-Dir["#{transcoders_src_dir}/*#{$dlext}"].each do |name|
-  target = File.join transcoders_lib_dir, File.basename(name)
-  file target => name do |t|
-    cp t.prerequisites.first, t.name
-  end
-  TRANSCODING_LIBS << target
-end
-
-file transcoders_database => [transcoders_lib_dir, transcoders_extract] + TRANSCODING_LIBS do |t|
+file transcoders_database => [transcoders_lib_dir, transcoders_extract] do |t|
   ruby transcoders_extract, transcoders_src_dir, t.name
 end
 
@@ -262,15 +272,6 @@ end
 task 'vm/test/runner' => GENERATED do
   blueprint = Daedalus.load "rakelib/blueprint.rb"
   blueprint.build "vm/test/runner", @parallel_jobs
-end
-
-task :transcoders => 'vendor/oniguruma/libonig.a' do
-  dir = "lib/19/encoding/converter"
-  mkdir_p dir
-
-  Dir["vendor/oniguruma/enc/trans/*#{$dlext}"].each do |lib|
-    cp lib, dir
-  end
 end
 
 # Generate files for instructions and interpreters

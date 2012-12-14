@@ -18,6 +18,8 @@
 
 #include "on_stack.hpp"
 
+#include <string>
+
 namespace rubinius {
 
   void Module::bootstrap_methods(STATE) {
@@ -42,7 +44,7 @@ namespace rubinius {
   Module* Module::allocate(STATE, Object* self) {
     Module* module = Module::create(state);
 
-    module->klass(state, (Class*)self);
+    module->klass(state, as<Class>(self));
 
     return module;
   }
@@ -379,6 +381,47 @@ namespace rubinius {
     return NULL;
   }
 
+  Class* Module::mirror(STATE, Object* obj) {
+    Class* object_class = obj->class_object(state);
+    Class* mirror = object_class->mirror();
+
+    if(!mirror->nil_p()) return mirror;
+
+    Class* klass = object_class;
+
+    do {
+      Symbol* name = klass->module_name();
+
+      if(!name->nil_p()) {
+        std::string class_name = name->cpp_str(state);
+        size_t k = class_name.rfind("::");
+        if(k != std::string::npos) {
+          class_name = class_name.substr(k);
+        }
+
+        bool found;
+        Object* obj = G(mirror)->get_const(state, state->symbol(class_name), &found);
+
+        if(found) {
+          if(Class* mirror_class = try_as<Class>(obj)) {
+            object_class->mirror(state, mirror_class);
+            return mirror_class;
+          }
+        }
+      }
+
+      Module* ancestor = klass->superclass();
+      klass = 0;
+
+      while(!ancestor->nil_p()) {
+        if((klass = try_as<Class>(ancestor))) break;
+        ancestor = ancestor->superclass();
+      }
+    } while(klass);
+
+    return nil<Class>();
+  }
+
   std::string Module::debug_str(STATE) {
     Symbol* name = module_name();
 
@@ -413,7 +456,7 @@ namespace rubinius {
   IncludedModule* IncludedModule::allocate(STATE, Object* self) {
     IncludedModule* imod = IncludedModule::create(state);
 
-    imod->klass(state, (Class*)self);
+    imod->klass(state, as<Class>(self));
 
     return imod;
   }

@@ -21,7 +21,11 @@
 #include <llvm/Value.h>
 #include <llvm/BasicBlock.h>
 #include <llvm/Function.h>
+#if RBX_LLVM_API_VER >= 302
+#include <llvm/IRBuilder.h>
+#else
 #include <llvm/Support/IRBuilder.h>
+#endif
 #include <llvm/CallingConv.h>
 
 using namespace llvm;
@@ -153,7 +157,7 @@ namespace rubinius {
       out_args_block_= ptr_gep(out_args_, 2, "out_args_block");
       out_args_total_= ptr_gep(out_args_, 3, "out_args_total");
       out_args_arguments_ = ptr_gep(out_args_, 4, "out_args_arguments");
-      out_args_container_ = ptr_gep(out_args_, offset::args_container,
+      out_args_container_ = ptr_gep(out_args_, offset::Arguments::argument_container,
                                     "out_args_container");
     }
 
@@ -187,8 +191,8 @@ namespace rubinius {
       inline_policy_ = policy;
     }
 
-    void init_policy() {
-      inline_policy_ = InlinePolicy::create_policy(machine_code());
+    void init_policy(LLVMState* state) {
+      inline_policy_ = InlinePolicy::create_policy(state, machine_code());
       own_policy_ = true;
     }
 
@@ -305,12 +309,12 @@ namespace rubinius {
       Value* word = create_load(gep, "flags");
       Value* flags = b().CreatePtrToInt(word, ls_->Int64Ty, "word2flags");
 
-      // 10 bits worth of mask
-      Value* mask = ConstantInt::get(ls_->Int64Ty, ((1 << 10) - 1));
+      // 9 bits worth of mask
+      Value* mask = ConstantInt::get(ls_->Int64Ty, ((1 << 9) - 1));
       Value* obj_type = b().CreateAnd(flags, mask, "mask");
 
-      // Compare all 10 bits.
-      Value* tag = ConstantInt::get(ls_->Int64Ty, type << 2);
+      // Compare all 9 bits.
+      Value* tag = ConstantInt::get(ls_->Int64Ty, type << 1);
 
       return b().CreateICmpEQ(obj_type, tag, name);
     }
@@ -330,7 +334,7 @@ namespace rubinius {
     }
 
     Value* get_class_id(Value* cls) {
-      Value* idx[] = { zero_, cint(offset::class_class_id) };
+      Value* idx[] = { zero_, cint(offset::Class::class_id) };
       Value* gep = create_gep(cls, idx, 2, "class_id_pos");
       return create_load(gep, "class_id");
     }
@@ -701,7 +705,7 @@ namespace rubinius {
 
     // Scope maintenance
     void flush_scope_to_heap(Value* vars) {
-      Value* pos = b().CreateConstGEP2_32(vars, 0, offset::vars_on_heap,
+      Value* pos = b().CreateConstGEP2_32(vars, 0, offset::StackVariables::on_heap,
                                      "on_heap_pos");
 
       Value* on_heap = b().CreateLoad(pos, "on_heap");
@@ -765,39 +769,6 @@ namespace rubinius {
           obj, NativeIntTy, "cast");
     }
 
-    // Fixnum manipulations
-    //
-    Value* tag_strip(Value* obj, Type* type = NULL) {
-      if(!type) type = FixnumTy;
-
-      Value* i = b().CreatePtrToInt(
-          obj, NativeIntTy, "as_int");
-
-      Value* more = b().CreateLShr(
-          i, ConstantInt::get(NativeIntTy, 1),
-          "lshr");
-      return b().CreateIntCast(
-          more, type, true, "stripped");
-    }
-
-    Value* tag_strip32(Value* obj) {
-      Value* i = b().CreatePtrToInt(
-          obj, ls_->Int32Ty, "as_int");
-
-      return b().CreateLShr(
-          i, one_,
-          "lshr");
-    }
-
-    Value* fixnum_to_native(Value* obj) {
-      Value* i = b().CreatePtrToInt(
-          obj, NativeIntTy, "as_int");
-
-      return b().CreateLShr(
-          i, ConstantInt::get(NativeIntTy, 1),
-          "lshr");
-    }
-
     Value* fixnum_tag(Value* obj) {
       Value* native_obj = b().CreateZExt(
           obj, NativeIntTy, "as_native_int");
@@ -816,7 +787,7 @@ namespace rubinius {
       Value* i = b().CreatePtrToInt(
           obj, NativeIntTy, "as_int");
 
-      return b().CreateLShr(i, One, "lshr");
+      return b().CreateAShr(i, One, "ashr");
     }
 
     Value* as_obj(Value* val) {
@@ -825,6 +796,21 @@ namespace rubinius {
 
     Value* check_if_fixnum(Value* val) {
       Value* fix_mask = ConstantInt::get(ls_->IntPtrTy, TAG_FIXNUM_MASK);
+      Value* fix_tag  = ConstantInt::get(ls_->IntPtrTy, TAG_FIXNUM);
+
+      Value* lint = cast_int(val);
+      Value* masked = b().CreateAnd(lint, fix_mask, "masked");
+
+      return b().CreateICmpEQ(masked, fix_tag, "is_fixnum");
+    }
+
+    Value* check_if_positive_fixnum(Value* val) {
+      /**
+       * Add the sign bit to the mask, when and'ed the result
+       * should be the default fixnum mask for a positive number
+       */
+      Value* fix_mask = ConstantInt::get(ls_->IntPtrTy,
+                        (1UL << (FIXNUM_WIDTH + 1)) | TAG_FIXNUM_MASK);
       Value* fix_tag  = ConstantInt::get(ls_->IntPtrTy, TAG_FIXNUM);
 
       Value* lint = cast_int(val);
@@ -846,11 +832,73 @@ namespace rubinius {
       return b().CreateICmpEQ(masked, fix_tag, "is_fixnum");
     }
 
+    Value* check_if_positive_fixnums(Value* val, Value* val2) {
+      /**
+       * Add the sign bit to the mask, when and'ed the result
+       * should be the default fixnum mask for a positive number
+       */
+      Value* fix_mask = ConstantInt::get(ls_->IntPtrTy,
+                        (1UL << (FIXNUM_WIDTH + 1)) | TAG_FIXNUM_MASK);
+      Value* fix_tag  = ConstantInt::get(ls_->IntPtrTy, TAG_FIXNUM);
+
+      Value* lint = cast_int(val);
+      Value* rint = cast_int(val2);
+
+      /**
+       * And both numbers with the mask for positive numbers.
+       * Then OR them so if one of them is negative, the result
+       * is not equal to the fixnum tag obtained from both arguments
+       */
+      Value* masked1 = b().CreateAnd(lint, fix_mask, "masked");
+      Value* masked2 = b().CreateAnd(rint, fix_mask, "masked");
+      Value* anded   = b().CreateAnd(masked1, masked2, "fixnums_anded");
+      Value* same    = b().CreateAnd(anded, fix_tag, "are_fixnums");
+      Value* ored    = b().CreateOr(masked1, masked2, "fixnums_ored");
+
+      return b().CreateICmpEQ(same, ored, "is_fixnum");
+    }
+
+    Value* check_if_non_zero_fixnum(Value* val) {
+      Value* fix_tag  = ConstantInt::get(ls_->IntPtrTy, TAG_FIXNUM);
+
+      Value* lint = cast_int(val);
+      return b().CreateICmpNE(lint, fix_tag, "is_fixnum");
+    }
+
+    Value* check_if_fits_fixnum(Value* val) {
+      Value* fixnum_max = ConstantInt::get(ls_->IntPtrTy, FIXNUM_MAX);
+      Value* fixnum_min = ConstantInt::get(ls_->IntPtrTy, FIXNUM_MIN);
+      Value* val_int = cast_int(val);
+
+      Value* less = b().CreateICmpSLE(val_int, fixnum_max);
+      Value* more = b().CreateICmpSGE(val_int, fixnum_min);
+
+      return b().CreateAnd(less, more, "fits_fixnum");
+    }
+
+    Value* promote_to_bignum(Value* arg) {
+      std::vector<Type*> types;
+
+      types.push_back(StateTy);
+      types.push_back(NativeIntTy);
+
+      FunctionType* ft = FunctionType::get(ObjType, types, false);
+      Function* func = cast<Function>(
+          module_->getOrInsertFunction("rbx_create_bignum", ft));
+
+      Value* call_args[] = {
+        vm_,
+        arg
+      };
+
+      return b().CreateCall(func, call_args, "big_value");
+    }
+
     // Tuple access
     Value* get_tuple_size(Value* tup) {
       Value* idx[] = {
         zero_,
-        cint(offset::tuple_full_size)
+        cint(offset::Tuple::full_size)
       };
 
       Value* pos = create_gep(tup, idx, 2, "table_size_pos");

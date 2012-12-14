@@ -10,8 +10,6 @@
 #include "llvm/disassembler.hpp"
 #include "llvm/jit_context.hpp"
 
-#include "vm/config.h"
-
 #include "builtin/fixnum.hpp"
 #include "builtin/constantscope.hpp"
 #include "builtin/module.hpp"
@@ -28,7 +26,11 @@
 #include "configuration.hpp"
 #include "instruments/timing.hpp"
 
+#if RBX_LLVM_API_VER >= 302
+#include <llvm/DataLayout.h>
+#else
 #include <llvm/Target/TargetData.h>
+#endif
 // #include <llvm/LinkAllPasses.h>
 #include <llvm/Analysis/Verifier.h>
 #include <llvm/Transforms/Scalar.h>
@@ -221,9 +223,7 @@ namespace rubinius {
     }
 
     virtual void perform() {
-      set_name("rbx.jit");
-
-      ManagedThread::set_current(ls_);
+      ManagedThread::set_current(ls_, "rbx.jit");
 
 #ifndef RBX_WINDOWS
       sigset_t set;
@@ -330,6 +330,7 @@ namespace rubinius {
 
           jit::RuntimeDataHolder* rd = jit.context().runtime_data_holder();
 
+          atomic::memory_barrier();
           ls_->start_method_update();
 
           if(!req->is_block()) {
@@ -402,39 +403,6 @@ namespace rubinius {
     }
   };
 
-  namespace {
-    void add_fast_passes(FunctionPassManager* passes) {
-      // Eliminate unnecessary alloca.
-      passes->add(createPromoteMemoryToRegisterPass());
-      // Do simple "peephole" optimizations and bit-twiddling optzns.
-      passes->add(createInstructionCombiningPass());
-      // Reassociate expressions.
-      passes->add(createReassociatePass());
-      // Eliminate Common SubExpressions.
-      passes->add(createGVNPass());
-      passes->add(createDeadStoreEliminationPass());
-
-      passes->add(createInstructionCombiningPass());
-
-      passes->add(createScalarReplAggregatesPass());
-      passes->add(createLICMPass());
-
-      passes->add(createSCCPPass());
-      passes->add(createInstructionCombiningPass());
-
-      // Simplify the control flow graph (deleting unreachable blocks, etc).
-      passes->add(createCFGSimplificationPass());
-
-      // passes->add(createGVNPass());
-      // passes->add(createCFGSimplificationPass());
-      passes->add(createDeadStoreEliminationPass());
-      passes->add(createAggressiveDCEPass());
-      // passes->add(createVerifierPass());
-      passes->add(create_overflow_folding_pass());
-      passes->add(create_guard_eliminator_pass());
-    }
-  }
-
   void LLVMState::add_internal_functions() { }
 
   static const bool debug_search = false;
@@ -504,8 +472,6 @@ namespace rubinius {
     Zero = llvm::ConstantInt::get(Int32Ty, 0);
     One = llvm::ConstantInt::get(Int32Ty, 1);
 
-    bool fast_code_passes = false;
-
     module_ = new llvm::Module("rubinius", ctx_);
 
     autogen_types::makeLLVMModuleContents(module_);
@@ -523,45 +489,51 @@ namespace rubinius {
 
     engine_ = factory.create();
 
+    builder_ = new llvm::PassManagerBuilder();
+    builder_->OptLevel = 2;
     passes_ = new llvm::FunctionPassManager(module_);
 
+#if RBX_LLVM_API_VER >= 302
+    module_->setDataLayout(engine_->getDataLayout()->getStringRepresentation());
+    passes_->add(new llvm::DataLayout(*engine_->getDataLayout()));
+#else
+    module_->setDataLayout(engine_->getTargetData()->getStringRepresentation());
     passes_->add(new llvm::TargetData(*engine_->getTargetData()));
+#endif
 
-    if(fast_code_passes) {
-      add_fast_passes(passes_);
-    } else {
-      // Eliminate unnecessary alloca.
-      passes_->add(createPromoteMemoryToRegisterPass());
-      // Do simple "peephole" optimizations and bit-twiddling optzns.
-      passes_->add(createInstructionCombiningPass());
-      // Reassociate expressions.
-      passes_->add(createReassociatePass());
-      // Eliminate Common SubExpressions.
-      passes_->add(createGVNPass());
-      passes_->add(createDeadStoreEliminationPass());
+    builder_->populateFunctionPassManager(*passes_);
 
-      passes_->add(createInstructionCombiningPass());
+    // Eliminate unnecessary alloca.
+    passes_->add(createPromoteMemoryToRegisterPass());
+    // Do simple "peephole" optimizations and bit-twiddling optzns.
+    passes_->add(createInstructionCombiningPass());
+    // Reassociate expressions.
+    passes_->add(createReassociatePass());
+    // Eliminate Common SubExpressions.
+    passes_->add(createGVNPass());
+    passes_->add(createDeadStoreEliminationPass());
 
-      // Simplify the control flow graph (deleting unreachable blocks, etc).
-      passes_->add(createCFGSimplificationPass());
+    passes_->add(createInstructionCombiningPass());
 
-      passes_->add(create_rubinius_alias_analysis());
-      passes_->add(createGVNPass());
-      // passes_->add(createCFGSimplificationPass());
-      passes_->add(createDeadStoreEliminationPass());
-      // passes_->add(createVerifierPass());
-      passes_->add(createScalarReplAggregatesPass());
+    // Simplify the control flow graph (deleting unreachable blocks, etc).
+    passes_->add(createCFGSimplificationPass());
 
-      passes_->add(create_overflow_folding_pass());
-      passes_->add(create_guard_eliminator_pass());
+    passes_->add(create_rubinius_alias_analysis());
+    passes_->add(createGVNPass());
+    // passes_->add(createCFGSimplificationPass());
+    passes_->add(createDeadStoreEliminationPass());
+    // passes_->add(createVerifierPass());
+    passes_->add(createScalarReplAggregatesPass());
 
-      passes_->add(createCFGSimplificationPass());
-      passes_->add(createInstructionCombiningPass());
-      passes_->add(createScalarReplAggregatesPass());
-      passes_->add(createDeadStoreEliminationPass());
-      passes_->add(createCFGSimplificationPass());
-      passes_->add(createInstructionCombiningPass());
-    }
+    passes_->add(create_overflow_folding_pass());
+    passes_->add(create_guard_eliminator_pass());
+
+    passes_->add(createCFGSimplificationPass());
+    passes_->add(createInstructionCombiningPass());
+    passes_->add(createScalarReplAggregatesPass());
+    passes_->add(createDeadStoreEliminationPass());
+    passes_->add(createCFGSimplificationPass());
+    passes_->add(createInstructionCombiningPass());
 
     passes_->doInitialization();
 
@@ -591,6 +563,7 @@ namespace rubinius {
 
     shared_.remove_managed_thread(this);
     shared_.om->del_aux_barrier(&write_barrier_);
+    delete builder_;
     delete passes_;
     delete engine_;
     delete background_thread_;
@@ -647,8 +620,8 @@ namespace rubinius {
     return symbol_debug_str(cs->module()->module_name());
   }
 
-  void LLVMState::compile_soon(STATE, CompiledCode* code, Object* placement,
-                               bool is_block)
+  void LLVMState::compile_soon(STATE, GCToken gct, CompiledCode* code, CallFrame* call_frame,
+                               Object* placement, bool is_block)
   {
     bool wait = config().jit_sync;
 
@@ -681,17 +654,20 @@ namespace rubinius {
     queued_methods_++;
 
     if(wait) {
-      utilities::thread::Condition cond;
-      req->set_waiter(&cond);
+      wait_mutex.lock();
 
-      utilities::thread::Mutex mux;
-      mux.lock();
+      req->set_waiter(&wait_cond);
 
       background_thread_->add(req);
-      cond.wait(mux);
 
-      mux.unlock();
+      state->set_call_frame(call_frame);
+      state->gc_independent(gct);
 
+      wait_cond.wait(wait_mutex);
+
+      wait_mutex.unlock();
+      state->gc_dependent();
+      state->set_call_frame(0);
       // if(config().jit_inline_debug) {
         // if(block) {
           // log() << "JIT: compiled block inside: "
@@ -728,7 +704,7 @@ namespace rubinius {
   const static int cInlineMaxDepth = 2;
   const static size_t eMaxInlineSendCount = 10;
 
-  void LLVMState::compile_callframe(STATE, CompiledCode* start, CallFrame* call_frame,
+  void LLVMState::compile_callframe(STATE, GCToken gct, CompiledCode* start, CallFrame* call_frame,
                                     int primitive) {
 
     if(debug_search) {
@@ -771,12 +747,12 @@ namespace rubinius {
     }
 
     if(candidate->block_p()) {
-      compile_soon(state, candidate->compiled_code, candidate->block_env(), true);
+      compile_soon(state, gct, candidate->compiled_code, call_frame, candidate->block_env(), true);
     } else {
       if(candidate->compiled_code->can_specialize_p()) {
-        compile_soon(state, candidate->compiled_code, candidate->self()->class_object(state));
+        compile_soon(state, gct, candidate->compiled_code, call_frame, candidate->self()->class_object(state));
       } else {
-        compile_soon(state, candidate->compiled_code, cNil);
+        compile_soon(state, gct, candidate->compiled_code, call_frame, cNil);
       }
     }
   }

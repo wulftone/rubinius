@@ -863,7 +863,7 @@ extern "C" {
 
     if(!scope || scope->nil_p()) {
       Exception::internal_error(state, call_frame,
-                                "illegal set_local_depth usage, no parent");
+                                "illegal set_local_from usage, no parent");
       return 0;
     }
 
@@ -871,7 +871,7 @@ extern "C" {
       scope = scope->parent();
       if(!scope || scope->nil_p()) {
         Exception::internal_error(state, call_frame,
-                                  "illegal set_local_depth usage, no parent");
+                                  "illegal set_local_from usage, no parent");
         return 0;
       }
 
@@ -912,7 +912,7 @@ extern "C" {
         return 0;
       }
 
-      return scope->get_local(index);
+      return scope->get_local(state, index);
     }
   }
 
@@ -922,7 +922,7 @@ extern "C" {
 
     if(!scope || scope->nil_p()) {
       Exception::internal_error(state, call_frame,
-                                "illegal push_local_depth usage, no parent");
+                                "illegal push_local_from usage, no parent");
       return 0;
     }
 
@@ -931,12 +931,12 @@ extern "C" {
 
       if(!scope || scope->nil_p()) {
         Exception::internal_error(state, call_frame,
-                                  "illegal push_local_depth usage, no parent");
+                                  "illegal push_local_from usage, no parent");
         return 0;
       }
     }
 
-    return scope->get_local(index);
+    return scope->get_local(state, index);
   }
 
   Object* rbx_prologue_check(STATE, CallFrame* call_frame) {
@@ -1026,6 +1026,8 @@ extern "C" {
       return G(rubinius);
     case 2:
       return G(type);
+    case 3:
+      return G(mirror);
     default:
       return cNil;
     }
@@ -1267,12 +1269,15 @@ extern "C" {
     self->set_table_ivar(state, name, val);
   }
 
+  void rbx_setup_unwind(STATE, int count, uint32_t target_ip, int stack_depth, UnwindType type) {
+    state->vm()->unwinds().set_unwind_info(count, target_ip, stack_depth, type);
+  }
+
   Object* rbx_continue_uncommon(STATE, CallFrame* call_frame,
                                 int32_t entry_ip, native_int sp,
                                 CallFrame* method_call_frame,
                                 jit::RuntimeDataHolder* rd,
-                                int32_t unwind_count,
-                                int32_t* unwinds)
+                                int32_t unwind_count)
   {
     LLVMState::get(state)->add_uncommons_taken();
 
@@ -1310,10 +1315,11 @@ extern "C" {
       }
     }
 
+    state->vm()->unwinds().set_current(unwind_count);
     return MachineCode::uncommon_interpreter(state, mcode, call_frame,
                                           entry_ip, sp,
                                           method_call_frame, rd,
-                                          unwind_count, unwinds);
+                                          state->vm()->unwinds());
   }
 
   Object* rbx_restart_interp(STATE, CallFrame* call_frame, Executable* exec, Module* mod, Arguments& args) {
@@ -1324,7 +1330,6 @@ extern "C" {
                                  int32_t entry_ip, native_int sp,
                                  CallFrame* method_call_frame,
                                  int32_t unwind_count,
-                                 int32_t* input_unwinds,
                                  Object* top_of_stack)
   {
     MachineCode* mcode = call_frame->compiled_code->machine_code();
@@ -1346,14 +1351,6 @@ extern "C" {
     call_frame->ip_ = entry_ip;
 
     MachineCode::InterpreterState is;
-    UnwindInfo unwinds[kMaxUnwindInfos];
-
-    for(int i = 0, j = 0; j < unwind_count; i += 3, j++) {
-      UnwindInfo& uw = unwinds[j];
-      uw.target_ip = input_unwinds[i];
-      uw.stack_depth = input_unwinds[i + 1];
-      uw.type = (UnwindType)input_unwinds[i + 2];
-    }
 
     // Push the top of the stack into the call_frame->stk so the interpreter
     // sees it. This is done here rather than by the JIT to simplify the
@@ -1362,8 +1359,9 @@ extern "C" {
       call_frame->stk[++sp] = top_of_stack;
     }
 
+    state->vm()->unwinds().set_current(unwind_count);
     return MachineCode::debugger_interpreter_continue(state, mcode, call_frame,
-                                          sp, is, unwind_count, unwinds);
+                                          sp, is, state->vm()->unwinds());
   }
 
   Object* rbx_flush_scope(STATE, StackVariables* vars) {
@@ -1546,6 +1544,11 @@ extern "C" {
 
     CPP_CATCH
   }
+
+  Object* rbx_create_bignum(STATE, native_int arg) {
+    return Bignum::from(state, arg);
+  }
+
 }
 
 #endif

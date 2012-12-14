@@ -19,6 +19,7 @@
 
 #include "shared_state.hpp"
 
+#include "unwind_info.hpp"
 #include "fiber_stack.hpp"
 
 #include <vector>
@@ -84,6 +85,8 @@ namespace rubinius {
     friend class State;
 
   private:
+    UnwindInfoSet unwinds_;
+
     CallFrame* saved_call_frame_;
     uintptr_t stack_start_;
     uintptr_t stack_limit_;
@@ -137,6 +140,10 @@ namespace rubinius {
 
   public: /* Inline methods */
 
+    UnwindInfoSet& unwinds() {
+      return unwinds_;
+    }
+
     uint32_t thread_id() {
       return id_;
     }
@@ -183,7 +190,7 @@ namespace rubinius {
 
     void reset_stack_limit() {
       // @TODO assumes stack growth direction
-      stack_limit_ = (stack_start_ - stack_size_) + (4096 * 3);
+      stack_limit_ = (stack_start_ - stack_size_) + (4096 * 10);
     }
 
     void set_stack_bounds(uintptr_t start, int length) {
@@ -295,7 +302,7 @@ namespace rubinius {
     static void init_stack_size();
 
     static VM* current();
-    static void set_current(VM* vm);
+    static void set_current(VM* vm, std::string name);
 
     static void discard(STATE, VM*);
 
@@ -325,32 +332,29 @@ namespace rubinius {
 
     template <class T>
       T* new_object(Class *cls) {
-        return reinterpret_cast<T*>(new_object_typed(cls, sizeof(T), T::type));
+        return static_cast<T*>(new_object_typed(cls, sizeof(T), T::type));
       }
 
     template <class T>
       T* new_struct(Class* cls, size_t bytes = 0) {
-        T* obj = reinterpret_cast<T*>(new_object_typed(cls, sizeof(T) + bytes, T::type));
-        return obj;
+        return static_cast<T*>(new_object_typed(cls, sizeof(T) + bytes, T::type));
       }
 
     template <class T>
       T* new_object_mature(Class *cls) {
-        return reinterpret_cast<T*>(new_object_typed_mature(cls, sizeof(T), T::type));
+        return static_cast<T*>(new_object_typed_mature(cls, sizeof(T), T::type));
       }
 
     template <class T>
       T* new_object_bytes(Class* cls, size_t& bytes) {
         bytes = ObjectHeader::align(sizeof(T) + bytes);
-        T* obj = reinterpret_cast<T*>(new_object_typed(cls, bytes, T::type));
-
-        return obj;
+        return static_cast<T*>(new_object_typed(cls, bytes, T::type));
       }
 
     template <class T>
       T* new_object_variable(Class* cls, size_t fields, size_t& bytes) {
         bytes = sizeof(T) + (fields * sizeof(Object*));
-        return reinterpret_cast<T*>(new_object_typed(cls, bytes, T::type));
+        return static_cast<T*>(new_object_typed(cls, bytes, T::type));
       }
 
     /// Create a Tuple in the young GC space, return NULL if not possible.

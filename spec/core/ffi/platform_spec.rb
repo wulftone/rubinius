@@ -34,7 +34,7 @@ describe "FFI::Platform::IS_WINDOWS" do
   end
 
   platform_is :darwin do
-    it "returns true" do
+    it "returns false" do
       FFI::Platform::IS_WINDOWS.should == false
     end
   end
@@ -46,3 +46,43 @@ describe "FFI::Platform::ARCH" do
   end
 end
 
+describe "FFI::Platform::OS" do
+  platform_is :linux do
+    it "returns 'linux' as a string" do
+      FFI::Platform::OS.should == 'linux'
+    end
+  end
+
+  platform_is :windows do
+    it "returns 'windows' as a string" do
+      FFI::Platform::OS.should == 'windows'
+    end
+  end
+
+  platform_is :darwin do
+    it "returns 'darwin' as a string" do
+      FFI::Platform::OS.should == 'darwin'
+    end
+  end
+
+  describe "FFI::Platform.windows?" do
+    platform_is :linux do
+      it "returns false" do
+        FFI::Platform.windows?.should == false
+      end
+    end
+
+    platform_is :windows do
+      it "returns true" do
+        FFI::Platform.windows?.should == true
+      end
+    end
+
+    platform_is :darwin do
+      it "returns false" do
+        FFI::Platform.windows?.should == false
+      end
+    end
+  end
+
+end

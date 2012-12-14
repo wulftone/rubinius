@@ -4,14 +4,21 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#include "vm/config.h"
+
 #include <llvm/Module.h>
 #include <llvm/DerivedTypes.h>
 #include <llvm/Function.h>
 #include <llvm/Module.h>
 #include <llvm/Instructions.h>
+#if RBX_LLVM_API_VER >= 302
+#include <llvm/IRBuilder.h>
+#else
 #include <llvm/Support/IRBuilder.h>
+#endif
 #include <llvm/ExecutionEngine/JIT.h>
 #include <llvm/CodeGen/MachineCodeInfo.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
 #include <llvm/Pass.h>
 #include <llvm/PassManager.h>
 #include <llvm/Support/raw_ostream.h>
@@ -49,6 +56,7 @@ namespace rubinius {
     llvm::LLVMContext& ctx_;
     llvm::Module* module_;
     llvm::ExecutionEngine* engine_;
+    llvm::PassManagerBuilder* builder_;
     llvm::FunctionPassManager* passes_;
 
     llvm::Type* object_;
@@ -80,6 +88,8 @@ namespace rubinius {
     bool type_optz_;
 
     utilities::thread::SpinLock method_update_lock_;
+    utilities::thread::Mutex wait_mutex;
+    utilities::thread::Condition wait_cond;
 
   public:
 
@@ -136,6 +146,7 @@ namespace rubinius {
 
     llvm::Module* module() { return module_; }
     llvm::ExecutionEngine* engine() { return engine_; }
+    llvm::PassManagerBuilder* builder() { return builder_; }
     llvm::FunctionPassManager* passes() { return passes_; }
     llvm::Type* object() { return object_; }
 
@@ -229,11 +240,12 @@ namespace rubinius {
     llvm::Type* ptr_type(std::string name);
     llvm::Type* type(std::string name);
 
-    void compile_soon(STATE, CompiledCode* code, Object* extra, bool is_block=false);
+    void compile_soon(STATE, GCToken gct, CompiledCode* code, CallFrame* call_frame,
+                      Object* extra, bool is_block=false);
     void remove(llvm::Function* func);
 
     CallFrame* find_candidate(STATE, CompiledCode* start, CallFrame* call_frame);
-    void compile_callframe(STATE, CompiledCode* start, CallFrame* call_frame,
+    void compile_callframe(STATE, GCToken gct, CompiledCode* start, CallFrame* call_frame,
                            int primitive = -1);
 
     Symbol* symbol(const std::string& sym);
@@ -298,7 +310,7 @@ namespace rubinius {
     }
 
     void setDoesNotCapture(const char* name, int which) {
-      function(name)->setDoesNotCapture(which, true);
+      function(name)->setDoesNotCapture(which);
     }
 
     llvm::CallInst* call(const char* name, llvm::Value** start, int size,

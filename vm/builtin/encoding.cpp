@@ -7,6 +7,7 @@
 #include "builtin/class.hpp"
 #include "builtin/data.hpp"
 #include "builtin/encoding.hpp"
+#include "builtin/integer.hpp"
 #include "builtin/io.hpp"
 #include "builtin/lookuptable.hpp"
 #include "builtin/regexp.hpp"
@@ -15,6 +16,8 @@
 #include "builtin/tuple.hpp"
 
 #include "object_utils.hpp"
+#include "objectmemory.hpp"
+#include "configuration.hpp"
 
 #include "ontology.hpp"
 
@@ -23,6 +26,7 @@
 #include "gc/gc.hpp"
 
 #include <ctype.h>
+#include <string.h>
 
 #ifdef HAVE_NL_LANGINFO
 #include <locale.h>
@@ -45,13 +49,18 @@ namespace rubinius {
   void Encoding::init(STATE) {
     onig_init();  // in regexp.cpp too, but idempotent.
 
-    Class* enc = ontology::new_class_under(state, "EncodingClass", G(rubinius));
+    if(LANGUAGE_18_ENABLED(state)) {
+      Class* ns = ontology::new_class_under(state, "EncodingClass", G(rubinius));
+      GO(encoding).set(ontology::new_class_under(state, "Encoding", ns));
+    } else {
+      GO(encoding).set(ontology::new_class(state, "Encoding"));
+      G(rubinius)->set_const(state, "EncodingClass", G(encoding));
+    }
 
-    GO(encoding).set(ontology::new_class_under(state, "Encoding", enc));
     G(encoding)->set_object_type(state, EncodingType);
 
-    enc->set_const(state, "EncodingMap", LookupTable::create(state));
-    enc->set_const(state, "EncodingList", Array::create(state, 3));
+    G(encoding)->set_const(state, "EncodingMap", LookupTable::create(state));
+    G(encoding)->set_const(state, "EncodingList", Array::create(state, 3));
 
     G(encoding)->set_ivar(state, state->symbol("@default_external"), G(undefined));
     G(encoding)->set_ivar(state, state->symbol("@default_internal"), G(undefined));
@@ -76,7 +85,7 @@ namespace rubinius {
     locale_charmap = "US-ASCII";
 #endif
 
-    enc->set_const(state, "LocaleCharmap", String::create(state, locale_charmap));
+    G(encoding)->set_const(state, "LocaleCharmap", String::create(state, locale_charmap));
 
     index = find_index(state, locale_charmap);
     if(index < 0) index = find_index(state, "US-ASCII");
@@ -208,22 +217,28 @@ namespace rubinius {
   }
 
   Encoding* Encoding::default_external(STATE) {
+    Encoding* enc;
     Symbol* default_external = state->symbol("default_external");
-    Encoding* enc = as<Encoding>(G(encoding)->get_ivar(state, default_external));
-    if(enc == G(undefined)) {
-      enc = Encoding::find(state, "external");
+    Object* obj = G(encoding)->get_ivar(state, default_external);
+
+    if(!(enc = try_as<Encoding>(obj))) {
+      enc = as<Encoding>(Encoding::find(state, "external"));
       G(encoding)->set_ivar(state, default_external, enc);
     }
+
     return enc;
   }
 
   Encoding* Encoding::default_internal(STATE) {
+    Encoding* enc;
     Symbol* default_internal = state->symbol("default_internal");
-    Encoding* enc = as<Encoding>(G(encoding)->get_ivar(state, default_internal));
-    if(enc == G(undefined)) {
+    Object* obj = G(encoding)->get_ivar(state, default_internal);
+
+    if(!(enc = try_as<Encoding>(obj))) {
       enc = Encoding::find(state, "internal");
       G(encoding)->set_ivar(state, default_internal, enc);
     }
+
     return enc;
   }
 
@@ -380,10 +395,6 @@ namespace rubinius {
 
   }
 
-  Class* Encoding::internal_class(STATE) {
-    return as<Class>(G(rubinius)->get_const(state, state->symbol("EncodingClass")));
-  }
-
   Class* Encoding::transcoding_class(STATE) {
     return as<Class>(G(encoding)->get_const(state, state->symbol("Transcoding")));
   }
@@ -393,18 +404,15 @@ namespace rubinius {
   }
 
   LookupTable* Encoding::encoding_map(STATE) {
-    return as<LookupTable>(internal_class(state)->get_const(
-              state, state->symbol("EncodingMap")));
+    return as<LookupTable>(G(encoding)->get_const(state, state->symbol("EncodingMap")));
   }
 
   Array* Encoding::encoding_list(STATE) {
-    return as<Array>(internal_class(state)->get_const(
-              state, state->symbol("EncodingList")));
+    return as<Array>(G(encoding)->get_const(state, state->symbol("EncodingList")));
   }
 
   LookupTable* Encoding::transcoding_map(STATE) {
-    return as<LookupTable>(internal_class(state)->get_const(
-              state, state->symbol("TranscodingMap")));
+    return as<LookupTable>(G(encoding)->get_const(state, state->symbol("TranscodingMap")));
   }
 
   Encoding* Encoding::from_index(STATE, int index) {
@@ -456,7 +464,7 @@ namespace rubinius {
     int size = strlen(name);
     if(size >= ENCODING_NAMELEN_MAX) size = ENCODING_NAMELEN_MAX-1;
 
-    ByteArray* name_ba = ByteArray::create(state, size);
+    ByteArray* name_ba = ByteArray::create(state, size + 1);
     memcpy(name_ba->raw_bytes(), name, size);
     name_ba->raw_bytes()[size] = 0;
     encoding_->name = reinterpret_cast<const char*>(name_ba->raw_bytes());
@@ -564,8 +572,7 @@ namespace rubinius {
   void Transcoding::init(STATE) {
     ontology::new_class_under(state, "Transcoding", G(encoding));
 
-    Class* cls = Encoding::internal_class(state);
-    cls->set_const(state, "TranscodingMap", LookupTable::create(state));
+    G(encoding)->set_const(state, "TranscodingMap", LookupTable::create(state));
 
 #include "vm/gen/transcoder_database.cpp"
   }
@@ -642,23 +649,310 @@ namespace rubinius {
 
     c->klass(state, as<Class>(self));
 
+    c->set_converter(NULL);
+
+    state->memory()->needs_finalization(c, (FinalizerFunction)&Converter::finalize);
+
     return c;
   }
 
-  Symbol* Converter::primitive_convert(STATE, String* source, String* target,
-                                       Object* offset, Object* size, Fixnum* options) {
-    return nil<Symbol>();
+  static Symbol* converter_result_symbol(STATE, rb_econv_result_t status) {
+    switch(status) {
+    case econv_invalid_byte_sequence:
+      return state->symbol("invalid_byte_sequence");
+    case econv_undefined_conversion:
+      return state->symbol("undefined_conversion");
+    case econv_destination_buffer_full:
+      return state->symbol("destination_buffer_full");
+    case econv_source_buffer_empty:
+      return state->symbol("source_buffer_empty");
+    case econv_finished:
+      return state->symbol("finished");
+    case econv_after_output:
+      return state->symbol("after_output");
+    case econv_incomplete_input:
+      return state->symbol("incomplete_input");
+    default:
+      return state->symbol("unknown_converter_error");
+    }
+  }
+
+  Symbol* Converter::primitive_convert(STATE, Object* source, String* target,
+                                       Fixnum* offset, Fixnum* size, Fixnum* options) {
+    String* src = 0;
+
+    if(!source->nil_p()) {
+      if(!(src = try_as<String>(source))) {
+        return force_as<Symbol>(Primitives::failure());
+      }
+    }
+
+    if(!converter_) {
+      size_t num_converters = converters()->size();
+
+      converter_ = rb_econv_alloc(num_converters);
+
+      for(size_t i = 0; i < num_converters; i++) {
+        Transcoding* transcoding = as<Transcoding>(converters()->get(state, i));
+        rb_transcoder* tr = transcoding->get_transcoder();
+
+        if(rb_econv_add_transcoder_at(converter_, tr, i) == -1) {
+          rb_econv_free(converter_);
+          converter_ = NULL;
+          return force_as<Symbol>(Primitives::failure());
+        }
+      }
+    }
+
+    if(!replacement()->nil_p()) {
+      native_int byte_size = replacement()->byte_size();
+      char* buf = (char*)XMALLOC(byte_size + 1);
+      strncpy(buf, replacement()->c_str(state), byte_size + 1);
+      converter_->replacement_str = (const unsigned char*)buf;
+      converter_->replacement_len = replacement()->byte_size();
+
+      String* name = replacement()->encoding()->name();
+      byte_size = name->byte_size();
+      buf = (char*)XMALLOC(byte_size + 1);
+      strncpy(buf, name->c_str(state), byte_size + 1);
+      converter_->replacement_enc = (const char*)buf;
+      converter_->replacement_allocated = 1;
+
+      size_t num_converters = replacement_converters()->size();
+      rb_econv_alloc_replacement_converters(converter_, num_converters / 2);
+
+      for(size_t i = 0, k = 0; i < num_converters; k++, i += 2) {
+        rb_econv_replacement_converters* repl_converter;
+        repl_converter = converter_->replacement_converters + k;
+
+        name = as<String>(replacement_converters()->get(state, i));
+        byte_size = name->byte_size();
+        buf = (char*)XMALLOC(byte_size + 1);
+        strncpy(buf, name->c_str(state), byte_size + 1);
+        repl_converter->destination_encoding_name = (const char*)buf;
+
+        Array* trs = as<Array>(replacement_converters()->get(state, i + 1));
+        size_t num_transcoders = trs->size();
+
+        repl_converter->num_transcoders = num_transcoders;
+        repl_converter->transcoders = ALLOC_N(rb_transcoder*, num_transcoders);
+
+        for(size_t j = 0; j < num_transcoders; j++) {
+          Transcoding* transcoding = as<Transcoding>(trs->get(state, j));
+          rb_transcoder* tr = transcoding->get_transcoder();
+
+          repl_converter->transcoders[j] = tr;
+        }
+      }
+    }
+
+    int flags = converter_->flags = options->to_native();
+
+    const unsigned char* source_str = 0;
+    const unsigned char* source_ptr = 0;
+    const unsigned char* source_end = 0;
+
+    if(src) {
+      source_str = source_ptr = (const unsigned char*)src->c_str(state);
+      source_end = source_ptr + src->byte_size();
+    } else {
+      source_ptr = source_end = NULL;
+    }
+
+    native_int byte_offset = offset->to_native();
+    native_int byte_size = size->to_native();
+
+    // TODO: Might it be possible to use a heuristic to calculate this based
+    // on the byte sizes of the encodings for the transcoders? It is very easy
+    // to cause a destination_buffer_full result by setting the size to the
+    // size of input, like MRI does. We set it to 1.5 * input size, but that
+    // is totally arbitrary based on behavior observed in specs.
+    if(byte_size == -1) {
+      if(src) {
+        byte_size = src->byte_size() * 2;
+      } else {
+        byte_size = 4096;
+      }
+    }
+
+    Array* buffers = 0;
+
+  retry:
+
+    native_int buffer_size = byte_offset + byte_size;
+    ByteArray* buffer = ByteArray::create_pinned(state, buffer_size);
+
+    unsigned char* buffer_ptr = (unsigned char*)buffer->raw_bytes() + byte_offset;
+    unsigned char* buffer_end = buffer_ptr + byte_size;
+
+    rb_econv_result_t result = econv_convert(converter_, &source_ptr, source_end,
+        &buffer_ptr, buffer_end, flags);
+
+    if(!buffers && byte_offset > 0) {
+      memcpy(buffer->raw_bytes(), target->data()->raw_bytes(), byte_offset);
+    }
+
+    native_int output_size = buffer_ptr - (unsigned char*)buffer->raw_bytes();
+
+    if(result == econv_destination_buffer_full && size->to_native() == -1) {
+      byte_size *= 2;
+
+      // Check if the size has overflown, then raise exception
+      if(byte_size < 0) {
+        Exception::argument_error(state, "string sizes too big");
+      }
+      byte_offset = 0;
+
+      source_ptr += source_ptr - source_str;
+
+      if(!buffers) buffers = Array::create(state, 0);
+
+      buffers->append(state, buffer);
+      buffers->append(state, Fixnum::from(output_size));
+
+      goto retry;
+    }
+
+    if(buffers) {
+      size_t size = buffers->size();
+      native_int total_size = output_size;
+
+      for(size_t i = 1; i < size; i += 2) {
+        total_size += as<Fixnum>(buffers->get(state, i))->to_native();
+      }
+
+      ByteArray* data = ByteArray::create(state, total_size);
+
+      uint8_t* p = data->raw_bytes();
+      native_int n = 0;
+
+      for(size_t i = 0; i < size; i += 2, p += n) {
+        n = as<Fixnum>(buffers->get(state, i + 1))->to_native();
+        memcpy(p, as<ByteArray>(buffers->get(state, i))->raw_bytes(), n);
+      }
+
+      memcpy(p, buffer->raw_bytes(), output_size);
+
+      target->data(state, data);
+      target->num_bytes(state, Fixnum::from(total_size));
+    } else {
+      target->data(state, buffer);
+      target->num_bytes(state, Fixnum::from(output_size));
+    }
+
+    target->shared(state, cFalse);
+    target->hash_value(state, nil<Fixnum>());
+    target->encoding(state, destination_encoding());
+
+    return converter_result_symbol(state, result);
   }
 
   String* Converter::finish(STATE) {
     return nil<String>();
   }
 
-  Exception* Converter::last_error(STATE) {
-    return nil<Exception>();
+  LookupTable* Converter::last_error(STATE) {
+    if(!converter_) return nil<LookupTable>();
+
+    size_t read_again_length = 0;
+    unsigned int codepoint = 0;
+    bool codepoint_set = false;
+
+    switch(converter_->last_error.result) {
+    case econv_invalid_byte_sequence:
+    case econv_incomplete_input:
+      read_again_length = converter_->last_error.readagain_len;
+      break;
+    case econv_undefined_conversion:
+      if(strncmp(converter_->last_error.source_encoding, "UTF-8", 5) == 0) {
+        const uint8_t* p = (const uint8_t*)converter_->last_error.error_bytes_start;
+        size_t len = converter_->last_error.error_bytes_len;
+        const uint8_t* e = p + len;
+        OnigEncodingType* utf8 = Encoding::utf8_encoding(state)->get_encoding();
+        int n = Encoding::precise_mbclen(p, e, utf8);
+
+        if(ONIGENC_MBCLEN_CHARFOUND_P(n) &&
+           (size_t)ONIGENC_MBCLEN_CHARFOUND_LEN(n) == len) {
+          codepoint = ONIGENC_MBC_TO_CODE(utf8, p, e);
+          codepoint_set = true;
+        }
+      }
+      break;
+    default:
+      return nil<LookupTable>();
+    }
+
+    LookupTable* error = LookupTable::create(state);
+
+    Symbol* result = converter_result_symbol(state, converter_->last_error.result);
+    error->store(state, state->symbol("result"), result);
+
+    String* src_enc = String::create(state, converter_->last_error.source_encoding);
+    error->store(state, state->symbol("source_encoding_name"), src_enc);
+
+    String* dst_enc = String::create(state, converter_->last_error.destination_encoding);
+    error->store(state, state->symbol("destination_encoding_name"), dst_enc);
+
+    const char* error_start = (const char*)converter_->last_error.error_bytes_start;
+    size_t error_length = converter_->last_error.error_bytes_len;
+
+    String* error_bytes = String::create(state, error_start, error_length);
+    error->store(state, state->symbol("error_bytes"), error_bytes);
+
+    if(read_again_length) {
+      String* read_again_bytes = String::create(state,
+          error_start + error_length, read_again_length);
+      error->store(state, state->symbol("read_again_bytes"), read_again_bytes);
+    }
+
+    if(codepoint_set) {
+      error->store(state, state->symbol("codepoint"), Integer::from(state, codepoint));
+    }
+
+    return error;
+  }
+
+  Array* Converter::primitive_errinfo(STATE) {
+    Array* info = Array::create(state, 5);
+    info->set(state, 4, cNil);
+
+    if(!converter_) {
+      info->set(state, 0, state->symbol("source_buffer_empty"));
+      return info;
+    }
+
+    Symbol* result = converter_result_symbol(state, converter_->last_error.result);
+    info->set(state, 0, result);
+
+    if(converter_->last_error.source_encoding) {
+      info->set(state, 1,
+                String::create(state, converter_->last_error.source_encoding));
+    }
+
+    if(converter_->last_error.destination_encoding) {
+      info->set(state, 2,
+                String::create(state, converter_->last_error.destination_encoding));
+    }
+
+    if(converter_->last_error.error_bytes_start) {
+      const char* error_start = (const char*)converter_->last_error.error_bytes_start;
+      size_t error_length = converter_->last_error.error_bytes_len;
+
+      info->set(state, 3, String::create(state, error_start, error_length));
+      info->set(state, 4, String::create(state, error_start + error_length,
+                                         converter_->last_error.readagain_len));
+    }
+
+    return info;
   }
 
   String* Converter::putback(STATE, Object* maxbytes) {
     return nil<String>();
+  }
+
+  void Converter::finalize(STATE, Converter* converter) {
+    if(rb_econv_t* ec = converter->get_converter()) {
+      rb_econv_free(ec);
+    }
   }
 }

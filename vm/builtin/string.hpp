@@ -83,6 +83,7 @@ namespace rubinius {
 
     /* interface */
 
+    static void init_hash();
     static void init(STATE);
 
     static String* create(STATE, Fixnum* size);
@@ -232,14 +233,23 @@ namespace rubinius {
     native_int find_character_byte_index(STATE, native_int index, native_int start = 0);
     native_int find_byte_character_index(STATE, native_int index, native_int start = 0);
 
-    // Rubinius.primitive :string_character_index
+    // Rubinius.primitive :string_character_byte_index
+    Fixnum* find_character_byte_index_prim(STATE, Fixnum* index, Fixnum* start);
+
+    // Rubinius.primitive :string_byte_character_index
     Fixnum* find_byte_character_index_prim(STATE, Fixnum* index, Fixnum* start);
 
     // Rubinius.primitive :string_index
     Fixnum* index(STATE, String* pattern, Fixnum* start);
 
+    // Rubinius.primitive :string_character_index
+    Fixnum* character_index(STATE, String* pattern, Fixnum* start);
+
     // Rubinius.primitive :string_rindex
     Fixnum* rindex(STATE, String* pattern, Fixnum* start);
+
+    // Rubinius.primitive :string_byte_index
+    Fixnum* byte_index(STATE, Object* value, Fixnum* start);
 
     // Rubinius.primitive :string_transform
     String* transform(STATE, Tuple* table, Object* respect_kcode);
@@ -268,8 +278,13 @@ namespace rubinius {
     // Rubinius.primitive :string_valid_encoding_p
     Object* valid_encoding_p(STATE);
 
+    int codepoint(STATE, bool* found);
+
     // Rubinius.primitive :string_codepoint
     Fixnum* codepoint(STATE);
+
+    // Rubinius.primitive :string_chr_at
+    Object* chr_at(STATE, Fixnum* byte);
 
     class Info : public TypeInfo {
     public:

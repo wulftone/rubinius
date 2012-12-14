@@ -168,7 +168,11 @@ namespace rubinius {
       return NULL;
     }
 
-    std::string& str = strings[sym->index()];
+    size_t sym_index = sym->index();
+    if(sym_index >= strings.size()) {
+      return NULL;
+    }
+    std::string& str = strings[sym_index];
     return String::create(state, str.data(), str.size());
   }
 
@@ -214,7 +218,7 @@ namespace rubinius {
 
     for(SymbolMap::iterator s = symbols.begin(); s != symbols.end(); ++s) {
       for(SymbolIds::iterator i = s->second.begin(); i != s->second.end(); ++i) {
-        ary->set(state, idx++, (Object*)Symbol::from_index(state, *i));
+        ary->set(state, idx++, Symbol::from_index(state, *i));
       }
     }
 

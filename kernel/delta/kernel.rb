@@ -18,7 +18,7 @@ module Kernel
         exc = exc.exception msg
       end
       raise ::TypeError, 'exception class/object expected' unless exc.kind_of?(::Exception)
-    elsif exc.kind_of? String or !exc
+    elsif exc.kind_of? String
       exc = ::RuntimeError.exception exc
     else
       raise ::TypeError, 'exception class/object expected'
@@ -154,10 +154,16 @@ module Kernel
   Rubinius::Globals.add_alias :$VERBOSE, :$-v
   Rubinius::Globals.add_alias :$VERBOSE, :$-w
 
-  set = proc do |key, sep|
-    raise ::TypeError, "value of $, must be String" unless sep.nil? or sep.kind_of?(String)
-    sep
+  set_string = proc do |key, value|
+    unless value.nil? or value.kind_of? String
+      raise TypeError, "value of #{key} must be a String"
+    end
+
+    Rubinius::Globals.set! key, value
   end
 
-  Rubinius::Globals.set_filter :$,, set
+  Rubinius::Globals.set_filter :$/, set_string
+  Rubinius::Globals.add_alias :$/, :$-0
+
+  Rubinius::Globals.set_filter :$,, set_string
 end

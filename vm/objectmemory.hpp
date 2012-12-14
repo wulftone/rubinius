@@ -36,8 +36,6 @@ namespace rubinius {
     class Slab;
   }
 
-  typedef std::vector<Object*> ObjectArray;
-
   struct YoungCollectStats {
     int bytes_copied;
     double percentage_used;
@@ -281,12 +279,10 @@ namespace rubinius {
     Object* new_object_typed_mature(STATE, Class* cls, size_t bytes, object_type type);
     Object* new_object_typed_enduring(STATE, Class* cls, size_t bytes, object_type type);
 
-    Object* new_object_fast(STATE, Class* cls, size_t bytes, object_type type);
-
     template <class T>
       T* new_object_bytes(STATE, Class* cls, size_t& bytes) {
         bytes = ObjectHeader::align(sizeof(T) + bytes);
-        T* obj = reinterpret_cast<T*>(new_object_typed(state, cls, bytes, T::type));
+        T* obj = static_cast<T*>(new_object_typed(state, cls, bytes, T::type));
 
         return obj;
       }
@@ -294,7 +290,7 @@ namespace rubinius {
     template <class T>
       T* new_object_bytes_mature(STATE, Class* cls, size_t& bytes) {
         bytes = ObjectHeader::align(sizeof(T) + bytes);
-        T* obj = reinterpret_cast<T*>(new_object_typed_mature(state, cls, bytes, T::type));
+        T* obj = static_cast<T*>(new_object_typed_mature(state, cls, bytes, T::type));
 
         return obj;
       }
@@ -302,12 +298,12 @@ namespace rubinius {
     template <class T>
       T* new_object_variable(STATE, Class* cls, size_t fields, size_t& bytes) {
         bytes = sizeof(T) + (fields * sizeof(Object*));
-        return reinterpret_cast<T*>(new_object_typed(state, cls, bytes, T::type));
+        return static_cast<T*>(new_object_typed(state, cls, bytes, T::type));
       }
 
     template <class T>
       T* new_object_enduring(STATE, Class* cls) {
-        return reinterpret_cast<T*>(
+        return static_cast<T*>(
             new_object_typed_enduring(state, cls, sizeof(T), T::type));
       }
 
@@ -320,7 +316,7 @@ namespace rubinius {
     void assign_object_id(STATE, Object* obj);
     Integer* assign_object_id_ivar(STATE, Object* obj);
     bool inflate_lock_count_overflow(STATE, ObjectHeader* obj, int count);
-    LockStatus contend_for_lock(STATE, GCToken gct, ObjectHeader* obj, bool* error, size_t us, bool interrupt);
+    LockStatus contend_for_lock(STATE, GCToken gct, ObjectHeader* obj, size_t us, bool interrupt);
     void release_contention(STATE, GCToken gct);
     bool inflate_and_lock(STATE, ObjectHeader* obj);
     bool inflate_for_contention(STATE, ObjectHeader* obj);

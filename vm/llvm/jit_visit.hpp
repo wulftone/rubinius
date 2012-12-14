@@ -17,14 +17,6 @@
 
 #include <list>
 
-#ifdef IS_X8664
-#define ADD_WITH_OVERFLOW "llvm.sadd.with.overflow.i63"
-#define SUB_WITH_OVERFLOW "llvm.ssub.with.overflow.i63"
-#else
-#define ADD_WITH_OVERFLOW "llvm.sadd.with.overflow.i31"
-#define SUB_WITH_OVERFLOW "llvm.ssub.with.overflow.i31"
-#endif
-
 namespace rubinius {
   extern "C" Object* invoke_object_class(STATE, CallFrame* call_frame, Object** args, int arg_count);
 
@@ -79,10 +71,6 @@ namespace rubinius {
     bool allow_private_;
     opcode call_flags_;
 
-    // Cached Function*s
-    llvm::Function* rbx_simple_send_;
-    llvm::Function* rbx_simple_send_private_;
-
     // bail out destinations
     llvm::BasicBlock* bail_out_;
     llvm::BasicBlock* bail_out_fast_;
@@ -102,7 +90,7 @@ namespace rubinius {
     bool has_side_effects_;
 
     int current_ip_;
-    int current_block_;
+    JITInlineBlock* current_block_;
     int block_arg_shift_;
     bool skip_yield_stack_;
 
@@ -123,8 +111,6 @@ namespace rubinius {
       , block_map_(bm)
       , allow_private_(false)
       , call_flags_(0)
-      , rbx_simple_send_(0)
-      , rbx_simple_send_private_(0)
       , method_entry_(info.profiling_entry())
       , args_(info.args())
       , vars_(info.variables())
@@ -133,11 +119,17 @@ namespace rubinius {
       , sends_done_(0)
       , has_side_effects_(false)
       , current_ip_(0)
-      , current_block_(-1)
+      , current_block_(NULL)
       , block_arg_shift_(0)
       , skip_yield_stack_(false)
       , current_jbb_(0)
     {}
+
+    ~JITVisit() {
+      if(current_block_) {
+        delete current_block_;
+      }
+    }
 
     bool for_inlined_method() {
       return info().for_inlined_method();
@@ -234,6 +226,13 @@ namespace rubinius {
 
     BasicBlock* exception_handler() {
       return current_jbb_->exception_handler->entry();
+    }
+
+    void clear_current_block() {
+      if(current_block_) {
+        delete current_block_;
+        current_block_ = NULL;
+      }
     }
 
     void check_for_return(Value* val) {
@@ -349,7 +348,6 @@ namespace rubinius {
       sig << ls_->IntPtrTy;
       sig << "CallFrame";
       sig << ls_->Int32Ty;
-      sig << llvm::PointerType::getUnqual(ls_->Int32Ty);
 
       int unwinds = emit_unwinds();
 
@@ -362,11 +360,10 @@ namespace rubinius {
         sp,
         root_callframe,
         cint(unwinds),
-        info().unwind_info(),
         (pass_top ? val : Constant::getNullValue(val->getType()))
       };
 
-      Value* call = sig.call("rbx_continue_debugging", call_args, 8, "", b());
+      Value* call = sig.call("rbx_continue_debugging", call_args, 7, "", b());
 
       info().add_return_value(call, current_block());
       b().CreateBr(info().return_pad());
@@ -421,8 +418,12 @@ namespace rubinius {
       flush_stack();
     }
 
-    /* push a global constant onto the stack */
-    /* 0:cpath_top, 1:rubinius */
+    /* push a global constant onto the stack
+    *  0 : cpath_top (Object)
+     * 1 : Rubinius module
+     * 2 : Rubinius::Type module
+     * 3 : Rubinius::Mirror class
+     */
     void push_system_object(int which) {
       // we're calling something that returns an Object
       Signature sig(ls_, ObjType);
@@ -656,7 +657,7 @@ namespace rubinius {
 
       Value* execute_pos_idx[] = {
         cint(0),
-        cint(offset::ic_execute),
+        cint(offset::InlineCache::execute),
       };
 
       Value* execute_pos = b().CreateGEP(cache_const,
@@ -690,7 +691,7 @@ namespace rubinius {
 
       Value* execute_pos_idx[] = {
         cint(0),
-        cint(offset::ic_execute),
+        cint(offset::InlineCache::execute),
       };
 
       Value* execute_pos = b().CreateGEP(cache_const,
@@ -950,10 +951,11 @@ namespace rubinius {
       Value* recv = stack_back(1);
       Value* arg =  stack_top();
 
-      BasicBlock* fast = new_block("fast");
+      BasicBlock* fast     = new_block("fast");
       BasicBlock* dispatch = new_block("dispatch");
-      BasicBlock* tagnow = new_block("tagnow");
-      BasicBlock* cont = new_block("cont");
+      BasicBlock* bignum   = new_block("bignum");
+      BasicBlock* tagnow   = new_block("tagnow");
+      BasicBlock* cont     = new_block("cont");
 
       check_fixnums(recv, arg, fast, dispatch);
 
@@ -964,40 +966,28 @@ namespace rubinius {
 
       set_block(fast);
 
-      std::vector<Type*> types;
-      types.push_back(FixnumTy);
-      types.push_back(FixnumTy);
+      Value* recv_int = fixnum_strip(recv);
+      Value* arg_int  = fixnum_strip(arg);
 
-      std::vector<Type*> struct_types;
-      struct_types.push_back(FixnumTy);
-      struct_types.push_back(ls_->Int1Ty);
+      Value* sum = b().CreateAdd(recv_int, arg_int, "fixnum.add");
 
-      StructType* st = StructType::get(ls_->ctx(), struct_types);
+      Value* cmp = check_if_fits_fixnum(sum);
 
-      FunctionType* ft = FunctionType::get(st, types, false);
-      Function* func = cast<Function>(
-          module_->getOrInsertFunction(ADD_WITH_OVERFLOW, ft));
+      create_conditional_branch(tagnow, bignum, cmp);
 
-      Value* recv_int = tag_strip(recv);
-      Value* arg_int = tag_strip(arg);
-      Value* call_args[] = { recv_int, arg_int };
-      Value* res = b().CreateCall(func, call_args, "add.overflow");
-
-      Value* sum = b().CreateExtractValue(res, 0, "sum");
-      Value* dof = b().CreateExtractValue(res, 1, "did_overflow");
-
-      b().CreateCondBr(dof, dispatch, tagnow);
+      set_block(bignum);
+      Value* big_value = promote_to_bignum(sum);
+      b().CreateBr(cont);
 
       set_block(tagnow);
-
       Value* imm_value = fixnum_tag(sum);
-
       b().CreateBr(cont);
 
       set_block(cont);
 
-      PHINode* phi = b().CreatePHI(ObjType, 2, "addition");
+      PHINode* phi = b().CreatePHI(ObjType, 3, "addition");
       phi->addIncoming(called_value, send_bb);
+      phi->addIncoming(big_value, bignum);
       phi->addIncoming(imm_value, tagnow);
 
       stack_remove(2);
@@ -1011,9 +1001,11 @@ namespace rubinius {
       Value* recv = stack_back(1);
       Value* arg =  stack_top();
 
-      BasicBlock* fast = new_block("fast");
+      BasicBlock* fast     = new_block("fast");
       BasicBlock* dispatch = new_block("dispatch");
-      BasicBlock* cont = new_block("cont");
+      BasicBlock* tagnow   = new_block("tagnow");
+      BasicBlock* bignum   = new_block("bignum");
+      BasicBlock* cont     = new_block("cont");
 
       check_fixnums(recv, arg, fast, dispatch);
 
@@ -1024,41 +1016,28 @@ namespace rubinius {
 
       set_block(fast);
 
-      std::vector<Type*> types;
-      types.push_back(FixnumTy);
-      types.push_back(FixnumTy);
+      Value* recv_int = fixnum_strip(recv);
+      Value* arg_int  = fixnum_strip(arg);
 
-      std::vector<Type*> struct_types;
-      struct_types.push_back(FixnumTy);
-      struct_types.push_back(ls_->Int1Ty);
+      Value* sub = b().CreateSub(recv_int, arg_int, "fixnum.sub");
 
-      StructType* st = StructType::get(ls_->ctx(), struct_types);
+      Value* cmp = check_if_fits_fixnum(sub);
 
-      FunctionType* ft = FunctionType::get(st, types, false);
-      Function* func = cast<Function>(
-          module_->getOrInsertFunction(SUB_WITH_OVERFLOW, ft));
+      create_conditional_branch(tagnow, bignum, cmp);
 
-      Value* recv_int = tag_strip(recv);
-      Value* arg_int = tag_strip(arg);
-      Value* call_args[] = { recv_int, arg_int };
-      Value* res = b().CreateCall(func, call_args, "sub.overflow");
-
-      Value* sum = b().CreateExtractValue(res, 0, "sub");
-      Value* dof = b().CreateExtractValue(res, 1, "did_overflow");
-
-      BasicBlock* tagnow = new_block("tagnow");
-
-      b().CreateCondBr(dof, dispatch, tagnow);
+      set_block(bignum);
+      Value* big_value = promote_to_bignum(sub);
+      b().CreateBr(cont);
 
       set_block(tagnow);
-      Value* imm_value = fixnum_tag(sum);
-
+      Value* imm_value = fixnum_tag(sub);
       b().CreateBr(cont);
 
       set_block(cont);
 
-      PHINode* phi = b().CreatePHI(ObjType, 2, "subtraction");
+      PHINode* phi = b().CreatePHI(ObjType, 3, "subtraction");
       phi->addIncoming(called_value, send_bb);
+      phi->addIncoming(big_value, bignum);
       phi->addIncoming(imm_value, tagnow);
 
       stack_remove(2);
@@ -1079,7 +1058,7 @@ namespace rubinius {
 
       Value* idx2[] = {
         cint(0),
-        cint(offset::tuple_field),
+        cint(offset::Tuple::field),
         cint(which)
       };
 
@@ -1121,7 +1100,7 @@ namespace rubinius {
     }
 
     void push_scope_local(Value* scope, opcode which) {
-      Value* pos = b().CreateConstGEP2_32(scope, 0, offset::varscope_locals,
+      Value* pos = b().CreateConstGEP2_32(scope, 0, offset::VariableScope::locals,
                                      "locals_pos");
 
       Value* table = b().CreateLoad(pos, "locals");
@@ -1134,7 +1113,7 @@ namespace rubinius {
     Value* local_location(Value* vars, opcode which) {
       Value* idx2[] = {
         cint(0),
-        cint(offset::vars_tuple),
+        cint(offset::StackVariables::locals),
         cint(which)
       };
 
@@ -1154,7 +1133,7 @@ namespace rubinius {
     void visit_push_local(opcode which) {
       Value* idx2[] = {
         cint(0),
-        cint(offset::vars_tuple),
+        cint(offset::StackVariables::locals),
         cint(which)
       };
 
@@ -1193,7 +1172,7 @@ namespace rubinius {
     }
 
     void set_scope_local(Value* scope, opcode which) {
-      Value* pos = b().CreateConstGEP2_32(scope, 0, offset::varscope_locals,
+      Value* pos = b().CreateConstGEP2_32(scope, 0, offset::VariableScope::locals,
                                      "locals_pos");
 
       Value* table = b().CreateLoad(pos, "locals");
@@ -1210,7 +1189,7 @@ namespace rubinius {
     void visit_set_local(opcode which) {
       Value* idx2[] = {
         cint(0),
-        cint(offset::vars_tuple),
+        cint(offset::StackVariables::locals),
         cint(which)
       };
 
@@ -1260,13 +1239,13 @@ namespace rubinius {
       assert(vars);
 
       return b().CreateLoad(
-          b().CreateConstGEP2_32(vars, 0, offset::vars_self),
+          b().CreateConstGEP2_32(vars, 0, offset::StackVariables::self),
           "self");
     }
 
     Value* get_block() {
       return b().CreateLoad(
-          b().CreateConstGEP2_32(vars_, 0, offset::vars_block, "block_pos"));
+          b().CreateConstGEP2_32(vars_, 0, offset::StackVariables::block, "block_pos"));
     }
 
     void visit_push_self() {
@@ -1298,26 +1277,24 @@ namespace rubinius {
       }
 
       jbb = current_jbb_->exception_handler;
-      Value* unwinds = info().unwind_info();
 
-      for(int slice = (count - 1) * 3; slice >= 0; slice -= 3) {
-        /*
-        std::cout << "unwind: " << jbb->start_ip
-                  << " sp: " << jbb->sp
-                  << " type: " << jbb->exception_type
-                  << "\n";
-        */
+      Signature sig(ls_, ls_->VoidTy);
 
-        b().CreateStore(
-            cint(jbb->start_ip),
-            b().CreateConstGEP1_32(unwinds, slice, "unwind_ip"));
-        b().CreateStore(
-            cint(jbb->sp),
-            b().CreateConstGEP1_32(unwinds, slice + 1, "unwind_sp"));
-        b().CreateStore(
-            cint(jbb->exception_type),
-            b().CreateConstGEP1_32(unwinds, slice + 2, "unwind_type"));
+      sig << "State";
+      sig << ls_->Int32Ty;
+      sig << ls_->Int32Ty;
+      sig << ls_->Int32Ty;
+      sig << ls_->Int32Ty;
 
+      for(int i = count - 1; i >= 0; --i) {
+        Value* call_args[] = {
+          vm_,
+          cint(i),
+          cint(jbb->start_ip),
+          cint(jbb->sp),
+          cint(jbb->exception_type)
+        };
+        sig.call("rbx_setup_unwind", call_args, 5, "", b());
         jbb = jbb->exception_handler;
       }
 
@@ -1325,7 +1302,7 @@ namespace rubinius {
     }
 
     void emit_uncommon() {
-      emit_delayed_create_block(true);
+      emit_delayed_create_block();
 
       Value* sp = last_sp_as_int();
 
@@ -1340,7 +1317,6 @@ namespace rubinius {
       sig << "CallFrame";
       sig << ls_->VoidPtrTy;
       sig << ls_->Int32Ty;
-      sig << llvm::PointerType::getUnqual(ls_->Int32Ty);
 
       int unwinds = emit_unwinds();
 
@@ -1353,11 +1329,10 @@ namespace rubinius {
         sp,
         root_callframe,
         constant(info().context().runtime_data_holder(), ls_->VoidPtrTy),
-        cint(unwinds),
-        info().unwind_info()
+        cint(unwinds)
       };
 
-      Value* call = sig.call("rbx_continue_uncommon", call_args, 8, "", b());
+      Value* call = sig.call("rbx_continue_uncommon", call_args, 7, "", b());
 
       info().add_return_value(call, current_block());
       b().CreateBr(info().return_pad());
@@ -1517,21 +1492,24 @@ namespace rubinius {
 
       } else {
         // Emit both the inlined code and a send for it
+        if(inl.check_for_exception()) {
+          check_for_exception(inl.result());
+        }
         BasicBlock* inline_block = b().GetInsertBlock();
-
         b().CreateBr(cont);
 
         set_block(failure);
         Value* send_res = inline_cache_send(args, cache);
-        b().CreateBr(cont);
+
+        BasicBlock* send_block =
+          check_for_exception_then(send_res, cont);
 
         set_block(cont);
         PHINode* phi = b().CreatePHI(ObjType, 2, "send_result");
         phi->addIncoming(inl.result(), inline_block);
-        phi->addIncoming(send_res, failure);
+        phi->addIncoming(send_res, send_block);
 
         stack_remove(args + 1);
-        check_for_exception(phi);
 
         stack_push(phi);
       }
@@ -1564,7 +1542,7 @@ namespace rubinius {
       return for_inlined_method() && info().is_block;
     }
 
-    void emit_delayed_create_block(bool always=false) {
+    void emit_delayed_create_block() {
       std::list<JITMethodInfo*> in_scope;
       JITMethodInfo* nfo = &info();
 
@@ -1579,7 +1557,7 @@ namespace rubinius {
         nfo = *i;
 
         JITInlineBlock* ib = nfo->inline_block();
-        if(ib && ib->machine_code() && (always || !ib->created_object_p())) {
+        if(ib && ib->machine_code()) {
           JITMethodInfo* creator = ib->creation_scope();
           assert(creator);
 
@@ -1600,15 +1578,13 @@ namespace rubinius {
           b().CreateStore(
               blk,
               b().CreateConstGEP2_32(nfo->variables(), 0,
-                offset::vars_block),
+                offset::StackVariables::block),
               false);
-
-          if(!always) ib->set_created_object();
         }
       }
     }
 
-    void emit_create_block(opcode which, bool push=false) {
+    void emit_create_block(opcode which) {
       // if we're inside an inlined method that has a block
       // visible, that means that we've note yet emitted the code to
       // actually create the block for this inlined block.
@@ -1656,11 +1632,7 @@ namespace rubinius {
           call_args.push_back((*i)->call_frame());
         }
 
-        if(push) {
-          stack_push(b().CreateCall(func, call_args, "create_block"));
-        } else {
-          stack_set_top(b().CreateCall(func, call_args, "create_block"));
-        }
+        stack_set_top(b().CreateCall(func, call_args, "create_block"));
         return;
       };
 
@@ -1677,33 +1649,30 @@ namespace rubinius {
         cint(which)
       };
 
-      if(push) {
-        stack_push(b().CreateCall(func, call_args, "create_block"));
-      } else {
-        stack_set_top(b().CreateCall(func, call_args, "create_block"));
-      }
+      stack_set_top(b().CreateCall(func, call_args, "create_block"));
     }
 
     void visit_create_block(opcode which) {
-      // If we're creating a block to pass directly to
-      // send_stack_with_block, delay doing so.
-      if(next_op() == InstructionSequence::insn_send_stack_with_block) {
-        // Push a placeholder and register which literal we would
-        // use for the block. The later send handles whether to actually
-        // emit the call to create the block (replacing the placeholder)
-        stack_push(constant(cNil));
-        current_block_ = (int)which;
-      } else {
-        current_block_ = -1;
-        emit_create_block(which, true);
-      }
+      stack_push(constant(cNil));
+      BasicBlock* block_emit = new_block("block_emit");
+      b().CreateBr(block_emit);
+      set_block(block_emit);
+
+      emit_create_block(which);
+
+      BasicBlock* block_continue = new_block("block_continue");
+      b().CreateBr(block_continue);
+      set_block(block_continue);
+
+      CompiledCode* block_code = as<CompiledCode>(literal(which));
+      MachineCode* code = block_code->machine_code();
+
+      current_block_ = new JITInlineBlock(ls_, block_code, code, &info(), which);
+      current_block_->set_block_emit_loc(block_emit);
     }
 
     void visit_send_stack_with_block(opcode which, opcode args) {
       set_has_side_effects();
-
-      bool has_literal_block = (current_block_ >= 0);
-      bool block_on_stack = !has_literal_block;
 
       InlineCache* cache = reinterpret_cast<InlineCache*>(which);
       CompiledCode* block_code = 0;
@@ -1711,8 +1680,8 @@ namespace rubinius {
       if(cache->classes_seen() &&
           ls_->config().jit_inline_blocks &&
           !context().inlined_block()) {
-        if(has_literal_block) {
-          block_code = try_as<CompiledCode>(literal(current_block_));
+        if(current_block_) {
+          block_code = current_block_->method();
 
           // Run the policy on the block code here, if we're not going to
           // inline it, don't inline this either.
@@ -1749,12 +1718,10 @@ namespace rubinius {
 
         Inliner inl(context(), *this, cache, args, failure);
 
-        MachineCode* code = 0;
-        if(block_code) code = block_code->machine_code();
-        JITInlineBlock block_info(ls_, send_result, cleanup, block_code, code, &info(),
-                                  current_block_);
+        current_block_->set_block_break_result(send_result);
+        current_block_->set_block_break_loc(cleanup);
 
-        inl.set_inline_block(&block_info);
+        inl.set_inline_block(current_block_);
 
         int stack_cleanup = args + 2;
 
@@ -1768,10 +1735,6 @@ namespace rubinius {
             b().CreateBr(cleanup);
 
             set_block(failure);
-            if(!block_on_stack) {
-              emit_create_block(current_block_);
-              block_on_stack = true;
-            }
             emit_uncommon();
 
             set_block(cleanup);
@@ -1792,24 +1755,26 @@ namespace rubinius {
             set_block(cont);
           } else {
             // Emit both the inlined code and a send for it
+
+            if(inl.check_for_exception()) {
+              check_for_exception(inl.result());
+            }
             send_result->addIncoming(inl.result(), b().GetInsertBlock());
 
             b().CreateBr(cleanup);
 
             set_block(failure);
-            if(!block_on_stack) {
-              emit_create_block(current_block_);
-              block_on_stack = true;
-            }
 
             Value* send_res = block_send(cache, args, allow_private_);
-            b().CreateBr(cleanup);
+
+            BasicBlock* send_block =
+              check_for_exception_then(send_res, cleanup);
 
             set_block(cleanup);
             send_result->removeFromParent();
             cleanup->getInstList().push_back(send_result);
 
-            send_result->addIncoming(send_res, failure);
+            send_result->addIncoming(send_res, send_block);
 
             stack_remove(stack_cleanup);
             check_for_exception(send_result);
@@ -1819,8 +1784,10 @@ namespace rubinius {
 
           allow_private_ = false;
 
+          current_block_->eraseBlockEmit();
+
           // Clear the current block
-          current_block_ = -1;
+          clear_current_block();
           return;
         }
 
@@ -1830,26 +1797,16 @@ namespace rubinius {
 
 use_send:
 
-      // Detect a literal block being created and passed here.
-      if(!block_on_stack) {
-        emit_create_block(current_block_);
-      }
-
       Value* ret = block_send(cache, args, allow_private_);
       stack_remove(args + 2);
       check_for_return(ret);
       allow_private_ = false;
 
-      // Clear the current block
-      current_block_ = -1;
+      clear_current_block();
     }
 
     void visit_send_stack_with_splat(opcode which, opcode args) {
       set_has_side_effects();
-
-      if(current_block_ >= 0) {
-        emit_create_block(current_block_);
-      }
 
       InlineCache* cache = reinterpret_cast<InlineCache*>(which);
       Value* ret = splat_send(cache->name, args, allow_private_);
@@ -1858,8 +1815,7 @@ use_send:
       stack_push(ret);
       allow_private_ = false;
 
-      // Clear the current block
-      current_block_ = -1;
+      clear_current_block();
     }
 
     void visit_cast_array() {
@@ -1953,10 +1909,6 @@ use_send:
     void visit_send_super_stack_with_block(opcode which, opcode args) {
       set_has_side_effects();
 
-      if(current_block_ >= 0) {
-        emit_create_block(current_block_);
-      }
-
       InlineCache* cache = reinterpret_cast<InlineCache*>(which);
 
       b().CreateStore(get_self(), out_args_recv_);
@@ -1973,15 +1925,11 @@ use_send:
       stack_remove(args + 1);
       check_for_return(ret);
 
-      current_block_ = -1;
+      clear_current_block();
     }
 
     void visit_send_super_stack_with_splat(opcode which, opcode args) {
       set_has_side_effects();
-
-      if(current_block_ >= 0) {
-        emit_create_block(current_block_);
-      }
 
       InlineCache* cache = reinterpret_cast<InlineCache*>(which);
       Value* ret = super_send(cache->name, args, true);
@@ -1989,15 +1937,11 @@ use_send:
       check_for_exception(ret);
       stack_push(ret);
 
-      current_block_ = -1;
+      clear_current_block();
     }
 
     void visit_zsuper(opcode which) {
       set_has_side_effects();
-
-      if(current_block_ >= 0) {
-        emit_create_block(current_block_);
-      }
 
       InlineCache* cache = reinterpret_cast<InlineCache*>(which);
 
@@ -2021,7 +1965,7 @@ use_send:
       check_for_exception(ret);
       stack_push(ret);
 
-      current_block_ = -1;
+      clear_current_block();
     }
 
     void visit_add_scope() {
@@ -2103,8 +2047,8 @@ use_send:
       Function* func = cast<Function>(
           module_->getOrInsertFunction("rbx_push_const_fast", ft));
 
-      func->setOnlyReadsMemory(true);
-      func->setDoesNotThrow(true);
+      func->setOnlyReadsMemory();
+      func->setDoesNotThrow();
 
       flush();
 
@@ -2118,8 +2062,8 @@ use_send:
       CallInst* ret = b().CreateCall(func, call_args,
                                        "push_const_fast");
 
-      ret->setOnlyReadsMemory(true);
-      ret->setDoesNotThrow(true);
+      ret->setOnlyReadsMemory();
+      ret->setDoesNotThrow();
 
       check_for_exception(ret);
 
@@ -2482,7 +2426,7 @@ use_send:
           /*
           Value* idx[] = {
             cint(0),
-            cint(offset::vars_parent)
+            cint(offset::StackVariables::parent)
           };
 
           Value* varscope = b().CreateLoad(
@@ -2518,7 +2462,7 @@ use_send:
       else if(depth == 1) {
         Value* idx[] = {
           cint(0),
-          cint(offset::vars_parent)
+          cint(offset::StackVariables::parent)
         };
 
         Value* gep = b().CreateGEP(vars_, idx, "parent_pos");
@@ -2594,7 +2538,7 @@ use_send:
           /*
           Value* idx[] = {
             cint(0),
-            cint(offset::vars_parent)
+            cint(offset::StackVariables::parent)
           };
 
           Value* varscope = b().CreateLoad(
@@ -2632,7 +2576,7 @@ use_send:
       else if(depth == 1) {
         Value* idx[] = {
           cint(0),
-          cint(offset::vars_parent)
+          cint(offset::StackVariables::parent)
         };
 
         Value* gep = b().CreateGEP(vars_, idx, "parent_pos");
@@ -2773,7 +2717,7 @@ use_send:
       sig << ObjArrayTy;
 
       Value* block_obj = b().CreateLoad(
-          b().CreateConstGEP2_32(vars, 0, offset::vars_block),
+          b().CreateConstGEP2_32(vars, 0, offset::StackVariables::block),
           "block");
 
       Value* call_args[] = {
@@ -2804,7 +2748,7 @@ use_send:
       sig << ObjArrayTy;
 
       Value* block_obj = b().CreateLoad(
-          b().CreateConstGEP2_32(vars_, 0, offset::vars_block),
+          b().CreateConstGEP2_32(vars_, 0, offset::StackVariables::block),
           "block");
 
       Value* call_args[] = {
@@ -2833,9 +2777,9 @@ use_send:
       Function* func = cast<Function>(
           module_->getOrInsertFunction("rbx_check_interrupts", ft));
 
-      func->setDoesNotCapture(0, true);
-      func->setDoesNotCapture(1, true);
-      func->setDoesNotCapture(2, true);
+      func->setDoesNotCapture(0);
+      func->setDoesNotCapture(1);
+      func->setDoesNotCapture(2);
 
       flush();
 
@@ -2906,7 +2850,7 @@ use_send:
 
       Value* idx[] = {
         cint(0),
-        cint(offset::vars_self)
+        cint(offset::StackVariables::self)
       };
 
       Value* pos = b().CreateGEP(vars_, idx, "self_pos");
@@ -3362,6 +3306,10 @@ use_send:
       // call the function we just described using the builder
       Value* val = sig.call("rbx_push_system_object", call_args, 2, "so", b());
       stack_push(val, type::KnownType::type());
+    }
+
+    void visit_push_mirror() {
+      push_system_object(3);
     }
 
     void visit_push_ivar(opcode which) {

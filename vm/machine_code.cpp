@@ -25,6 +25,7 @@
 
 #include "raise_reason.hpp"
 #include "inline_cache.hpp"
+#include "on_stack.hpp"
 
 #include "configuration.hpp"
 
@@ -513,7 +514,7 @@ namespace rubinius {
     }
   }
 
-  void MachineCode::setup_argument_handler(CompiledCode* meth) {
+  void MachineCode::setup_argument_handler() {
     // Firstly, use the generic case that handles all cases
     fallback = &MachineCode::execute_specialized<GenericArguments>;
 
@@ -547,8 +548,6 @@ namespace rubinius {
         }
       }
     }
-
-    meth->set_executor(fallback);
   }
 
   /* This is the execute implementation used by normal Ruby code,
@@ -591,11 +590,16 @@ namespace rubinius {
       frame->prepare(mcode->stack_size);
 
       frame->previous = previous;
-      frame->flags = 0;
-      frame->arguments = &args;
+      frame->constant_scope_ = 0;
       frame->dispatch_data = 0;
       frame->compiled_code = code;
+      frame->flags = 0;
+      frame->optional_jit_data = 0;
+      frame->top_scope_ = 0;
       frame->scope = scope;
+      frame->arguments = &args;
+
+      GCTokenImpl gct;
 
 #ifdef ENABLE_LLVM
       // A negative call_count means we've disabled usage based JIT
@@ -603,7 +607,8 @@ namespace rubinius {
       if(mcode->call_count >= 0) {
         if(mcode->call_count >= state->shared().config.jit_call_til_compile) {
           LLVMState* ls = LLVMState::get(state);
-          ls->compile_callframe(state, code, frame);
+          OnStack<3> os(state, exec, mod, code);
+          ls->compile_callframe(state, gct, code, frame);
         } else {
           mcode->call_count++;
         }
@@ -612,9 +617,6 @@ namespace rubinius {
 
       // Check the stack and interrupts here rather than in the interpreter
       // loop itself.
-
-      GCTokenImpl gct;
-
       if(state->detect_stack_condition(frame)) {
         if(!state->check_interrupts(gct, frame, frame)) return NULL;
       }
@@ -657,11 +659,14 @@ namespace rubinius {
     Arguments args(state->symbol("__script__"), G(main), cNil, 0, 0);
 
     frame->previous = previous;
-    frame->flags = 0;
-    frame->arguments = &args;
+    frame->constant_scope_ = 0;
     frame->dispatch_data = 0;
     frame->compiled_code = code;
+    frame->flags = 0;
+    frame->optional_jit_data = 0;
+    frame->top_scope_ = 0;
     frame->scope = scope;
+    frame->arguments = &args;
 
     // Do NOT check if we should JIT this. We NEVER want to jit a script.
 

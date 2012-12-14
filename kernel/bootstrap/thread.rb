@@ -23,7 +23,7 @@ class Thread
 
   def fork
     Rubinius.primitive :thread_fork
-    Kernel.raise PrimitiveFailure, "Thread#fork primitive failed"
+    Kernel.raise ThreadError, "Thread#fork failed, thread already started or dead"
   end
 
   def raise_prim(exc)
@@ -71,6 +71,11 @@ class Thread
     Kernel.raise PrimitiveFailure, "Thread#unlock_locks primitive failed"
   end
 
+  def current_exception
+    Rubinius.primitive :thread_current_exception
+    Kernel.raise PrimitiveFailure, "Thread#current_exception primitive failed"
+  end
+
   @abort_on_exception = false
 
   def self.abort_on_exception
@@ -106,8 +111,7 @@ class Thread
       run obj
       dup
 
-      push_false
-      send :setup, 1, true
+      send :setup, 0, true
       pop
 
       run args
@@ -136,12 +140,7 @@ class Thread
 
     th_group.add self
 
-    begin
-      fork
-    rescue Exception => e
-      th_group.remove self
-      raise e
-    end
+    fork
   end
 
   alias_method :__thread_initialize__, :initialize
@@ -234,7 +233,7 @@ class Thread
   end
   private :join_inner
 
-  def raise(exc=$!, msg=nil, trace=nil)
+  def raise(exc=undefined, msg=nil, trace=nil)
     Rubinius.lock(self)
 
     unless @alive
@@ -243,11 +242,18 @@ class Thread
     end
 
     begin
+      if exc.equal?(undefined)
+        no_argument = true
+        exc = active_exception
+      end
+
       if exc.respond_to? :exception
         exc = exc.exception msg
         Kernel.raise TypeError, 'exception class/object expected' unless Exception === exc
         exc.set_backtrace trace if trace
-      elsif exc.kind_of? String or !exc
+      elsif no_argument
+        exc = RuntimeError.exception nil
+      elsif exc.kind_of? String
         exc = RuntimeError.exception exc
       else
         Kernel.raise TypeError, 'exception class/object expected'

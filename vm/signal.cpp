@@ -62,7 +62,7 @@ namespace rubinius {
     SYNC(state);
     if(self_) return;
     self_ = state->shared().new_vm();
-    thread_.set(Thread::create(state, self_, G(thread), handle_tramp, false));
+    thread_.set(Thread::create(state, self_, G(thread), handle_tramp, false, true));
     run(state);
 
   }
@@ -142,6 +142,8 @@ namespace rubinius {
 
     GCTokenImpl gct;
     utilities::thread::Thread::set_os_name("rbx.signal-dispatch");
+
+    state->vm()->thread->hard_unlock(state, gct);
 
     for(;;) {
       fd_set fds;

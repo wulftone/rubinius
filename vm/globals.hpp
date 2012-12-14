@@ -88,6 +88,7 @@ namespace rubinius {
     TypedRoot<Class*> integer;
     TypedRoot<Class*> numeric;
     TypedRoot<Class*> memory_pointer;
+    TypedRoot<Module*> ffi;
     TypedRoot<Class*> ffi_pointer;
     TypedRoot<Class*> taskprobe;
     TypedRoot<Class*> randomizer;
@@ -112,6 +113,7 @@ namespace rubinius {
     TypedRoot<Module*> type;
     TypedRoot<Class*> vm_class;
     TypedRoot<Class*> atomic_ref;
+    TypedRoot<Class*> mirror;
 
     /* Add new globals above this line. */
 
@@ -200,6 +202,7 @@ namespace rubinius {
       integer(&roots),
       numeric(&roots),
       memory_pointer(&roots),
+      ffi(&roots),
       ffi_pointer(&roots),
       taskprobe(&roots),
       randomizer(&roots),
@@ -221,7 +224,8 @@ namespace rubinius {
       encoding(&roots),
       type(&roots),
       vm_class(&roots),
-      atomic_ref(&roots)
+      atomic_ref(&roots),
+      mirror(&roots)
 
       /* Add initialize of globals above this line. */
     { }

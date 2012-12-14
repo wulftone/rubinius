@@ -52,8 +52,8 @@ extern "C" {
       str->encoding(env->state(), enc);
     }
 
-    // TODO: handle transcoding if necessary
-    return env->get_handle(str);
+    return rb_str_conv_enc(env->get_handle(str), enc->get_encoding(),
+                           rb_default_internal_encoding());
   }
 
   VALUE rb_external_str_new(const char* string, long size) {
@@ -64,28 +64,51 @@ extern "C" {
     return rb_external_str_new_with_enc(string, strlen(string), rb_default_external_encoding());
   }
 
+  VALUE rb_str_encode(VALUE str, VALUE to, int ecflags, VALUE ecopts) {
+    return rb_funcall(rb_mCAPI, rb_intern("rb_str_encode"), 4,
+                      str, to, INT2FIX(ecflags), ecopts);
+  }
+
   int rb_enc_str_coderange(VALUE string) {
-    // TODO
-    return ENC_CODERANGE_7BIT;
+    NativeMethodEnvironment* env = NativeMethodEnvironment::get();
+
+    String *str = c_as<String>(env->get_object(string));
+
+    bool valid = str->valid_encoding_p(env->state()) == cTrue;
+    bool ascii = str->ascii_only_p(env->state()) == cTrue;
+
+    if(valid && ascii) {
+      return ENC_CODERANGE_7BIT;
+    } else if(valid) {
+      return ENC_CODERANGE_VALID;
+    } else {
+      return ENC_CODERANGE_BROKEN;
+    }
   }
 
   VALUE rb_locale_str_new_cstr(const char *ptr) {
-    // TODO
-    return rb_str_new2(ptr);
+    return rb_external_str_new_with_enc(ptr, strlen(ptr), rb_locale_encoding());
   }
 
   VALUE rb_locale_str_new(const char* ptr, long len) {
-    // TODO
-    return rb_str_new(ptr, len);
+    return rb_external_str_new_with_enc(ptr, len, rb_locale_encoding());
+  }
+
+  VALUE rb_str_conv_enc_opts(VALUE str, rb_encoding* from, rb_encoding* to,
+                             int ecflags, VALUE ecopts)
+  {
+    VALUE f = rb_enc_from_encoding(from);
+    VALUE t = to ? rb_enc_from_encoding(to) : Qnil;
+
+    return rb_funcall(rb_mCAPI, rb_intern("rb_str_conv_enc_opts"), 5,
+                      str, f, t, INT2FIX(ecflags), ecopts);
   }
 
   VALUE rb_str_conv_enc(VALUE str, rb_encoding *from, rb_encoding *to) {
-    // TODO
-    return str;
+    return rb_str_conv_enc_opts(str, from, to, 0, Qnil);
   }
 
   VALUE rb_str_export_to_enc(VALUE str, rb_encoding *enc) {
-    // TODO
     return rb_str_conv_enc(str, rb_enc_get(str), enc);
   }
 }

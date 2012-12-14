@@ -8,6 +8,7 @@
 #ifndef ONIGURUMA_H
 struct OnigEncodingType;
 struct OnigTranscodingType;
+struct rb_econv_t;
 #endif
 
 namespace rubinius {
@@ -15,6 +16,7 @@ namespace rubinius {
   class LookupTable;
   class Symbol;
   class String;
+  class LookupTable;
 
   class Encoding : public Object {
   public:
@@ -39,7 +41,6 @@ namespace rubinius {
 
     static void init(STATE);
 
-    static Class* internal_class(STATE);
     static Class* transcoding_class(STATE);
     static Class* converter_class(STATE);
     static LookupTable* encoding_map(STATE);
@@ -137,26 +138,44 @@ namespace rubinius {
     Encoding* destination_encoding_;  // slot
     String* replacement_;             // slot
     Array* convpath_;                 // slot
+    Array* converters_;               // slot
+    Array* replacement_converters_;   // slot
+
+    rb_econv_t* converter_;
 
   public:
     attr_accessor(source_encoding, Encoding);
     attr_accessor(destination_encoding, Encoding);
     attr_accessor(replacement, String);
     attr_accessor(convpath, Array);
+    attr_accessor(converters, Array);
+    attr_accessor(replacement_converters, Array);
+
+    void set_converter(rb_econv_t* c) {
+      converter_ = c;
+    }
+
+    rb_econv_t* get_converter() {
+      return converter_;
+    }
 
     static void init(STATE);
+    static void finalize(STATE, Converter* converter);
 
     // Rubinius.primitive :encoding_converter_allocate
     static Converter* allocate(STATE, Object* self);
 
     // Rubinius.primitive :encoding_converter_primitive_convert
-    Symbol* primitive_convert(STATE, String* source, String* target, Object* offset, Object* size, Fixnum* options);
+    Symbol* primitive_convert(STATE, Object* source, String* target, Fixnum* offset, Fixnum* size, Fixnum* options);
 
     // Rubinius.primitive :encoding_converter_finish
     String* finish(STATE);
 
     // Rubinius.primitive :encoding_converter_last_error
-    Exception* last_error(STATE);
+    LookupTable* last_error(STATE);
+
+    // Rubinius.primitive :encoding_converter_primitive_errinfo
+    Array* primitive_errinfo(STATE);
 
     // Rubinius.primitive :encoding_converter_putback
     String* putback(STATE, Object* maxbytes);
@@ -186,6 +205,10 @@ namespace rubinius {
     static Transcoding* create(STATE, OnigTranscodingType* tr);
     static void declare(STATE, const char* from, const char* to, const char* lib);
     static void define(STATE, OnigTranscodingType* tr);
+
+    OnigTranscodingType* get_transcoder() {
+      return transcoder_;
+    }
 
     class Info : public TypeInfo {
     public:

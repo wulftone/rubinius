@@ -66,11 +66,6 @@ class String
     other
   end
 
-  def copy_from(other, start, size, dest)
-    Rubinius.primitive :string_copy_from
-    raise PrimitiveFailure, "String#copy_from primitive failed"
-  end
-
   def substring(start, count)
     Rubinius.primitive :string_substring
     raise PrimitiveFailure, "String#substring primitive failed"
@@ -127,10 +122,5 @@ class String
   def transform(tbl, respect_kcode)
     Rubinius.primitive :string_transform
     raise PrimitiveFailure, "String#transform primitive failed"
-  end
-
-  def resize_capacity(count)
-    Rubinius.primitive :string_resize_capacity
-    raise PrimitiveFailure, "String#resize_capacity primitive failed"
   end
 end

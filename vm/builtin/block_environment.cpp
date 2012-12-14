@@ -273,7 +273,9 @@ namespace rubinius {
       if(mcode->call_count >= state->shared().config.jit_call_til_compile) {
         LLVMState* ls = LLVMState::get(state);
 
-        ls->compile_soon(state, env->compiled_code(), env, true);
+        GCTokenImpl gct;
+        OnStack<1> os(state, env);
+        ls->compile_soon(state, gct, env->compiled_code(), previous, env, true);
 
       } else {
         mcode->call_count++;
@@ -297,7 +299,7 @@ namespace rubinius {
     frame->constant_scope_ = invocation.constant_scope;
 
     frame->arguments = &args;
-    frame->dispatch_data = reinterpret_cast<BlockEnvironment*>(env);
+    frame->dispatch_data = env;
     frame->compiled_code = env->compiled_code_;
     frame->scope = scope;
     frame->top_scope_ = env->top_scope_;

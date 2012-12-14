@@ -1,3 +1,7 @@
+#include <sys/ioctl.h>
+#include <termios.h>
+#include <stdio.h>
+#include <unistd.h>
 #include <errno.h>
 
 #include "objectmemory.hpp"
@@ -8,6 +12,7 @@
 #include "builtin/basicobject.hpp"
 #include "builtin/block_environment.hpp"
 #include "builtin/bytearray.hpp"
+#include "builtin/character.hpp"
 #include "builtin/class.hpp"
 #include "builtin/compactlookuptable.hpp"
 #include "builtin/compiledcode.hpp"
@@ -110,7 +115,7 @@ namespace rubinius {
   void VM::bootstrap_class(STATE) {
     /* Class is created first by hand, and twiddle to setup the internal
        recursion. */
-    Class* cls = (Class*)om->allocate_object_raw(sizeof(Class));
+    Class* cls = reinterpret_cast<Class*>(om->allocate_object_raw(sizeof(Class)));
 
     /* We create these 8 classes in a particular way and in a particular
      * order. We need all 8 to create fully initialized Classes and
@@ -118,9 +123,9 @@ namespace rubinius {
      * them all at once */
 
     // Class's klass is Class
+    cls->set_obj_type(ClassType);
     cls->klass(state, cls);
     cls->ivars(state, cNil);
-    cls->set_obj_type(ClassType);
 
     cls->set_object_type(state, ClassType);
     cls->set_class_id(state->shared().inc_class_count(state));
@@ -294,10 +299,10 @@ namespace rubinius {
     Array::init(state);
     ByteArray::init(state);
     String::init(state);
-    Encoding::init(state);
-    kcode::init(state);
+    Character::init(state);
     Executable::init(state);
     CompiledCode::init(state);
+    AtomicReference::init(state);
     IO::init(state);
     BlockEnvironment::init(state);
     ConstantScope::init(state);
@@ -330,7 +335,9 @@ namespace rubinius {
     Fiber::init(state);
     Alias::init(state);
     Randomizer::init(state);
-    AtomicReference::init(state);
+
+    Encoding::init(state);
+    kcode::init(state);
   }
 
   // @todo document all the sections of bootstrap_ontology
@@ -372,6 +379,7 @@ namespace rubinius {
     GO(vm_class).set(ontology::new_class_under(state, "VM", G(rubinius)));
 
     GO(type).set(ontology::new_module(state, "Type", G(rubinius)));
+    GO(mirror).set(ontology::new_class(state, "Mirror", G(object), G(rubinius)));
 
     System::bootstrap_methods(state);
     Module::bootstrap_methods(state);
@@ -472,10 +480,18 @@ namespace rubinius {
     G(rubinius)->set_const(state, "ENDIAN", symbol("big"));
 #endif
 
+    G(rubinius)->set_const(state, "PATH_MAX", Fixnum::from(PATH_MAX));
+
     // Used in Array.pack
     G(rubinius)->set_const(state, "SIZEOF_SHORT", Fixnum::from(sizeof(short)));
     G(rubinius)->set_const(state, "SIZEOF_INT", Fixnum::from(sizeof(int)));
     G(rubinius)->set_const(state, "SIZEOF_LONG", Fixnum::from(sizeof(long)));
+
+    struct winsize w;
+    if(ioctl(0, TIOCGWINSZ, &w)) {
+      w.ws_col = 80;
+    }
+    G(rubinius)->set_const(state, "TERMINAL_WIDTH", Fixnum::from(w.ws_col));
   }
 
   void VM::bootstrap_symbol(STATE) {

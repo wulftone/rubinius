@@ -138,6 +138,17 @@ namespace rubinius {
       return map[type];
     }
 
+    bool capi_check_interrupts(STATE, CallFrame* call_frame, void* end) {
+      if(!state->check_stack(call_frame, end)) {
+        return false;
+      }
+
+      if(unlikely(state->vm()->check_local_interrupts)) {
+        if(!state->process_async(call_frame)) return false;
+      }
+      return true;
+    }
+
     /**
      *  Common implementation for rb_funcall*
      */
@@ -191,7 +202,7 @@ namespace rubinius {
                                       Object** args, Object* block)
     {
       int marker = 0;
-      if(!env->state()->check_stack(env->current_call_frame(), &marker)) {
+      if(!capi_check_interrupts(env->state(), env->current_call_frame(), &marker)) {
         env->current_ep()->return_to(env);
       }
 
@@ -235,8 +246,7 @@ namespace rubinius {
       va_list varargs;
       va_start(varargs, arg_count);
 
-      Object** args = reinterpret_cast<Object**>(
-                        alloca(sizeof(Object*) * arg_count));
+      Object* args[arg_count];
 
       for(int i = 0; i < arg_count; i++) {
         args[i] = env->get_object(va_arg(varargs, VALUE));
@@ -281,7 +291,7 @@ namespace rubinius {
                               size_t arg_count, Object** arg_vals)
     {
       int marker = 0;
-      if(!env->state()->check_stack(env->current_call_frame(), &marker)) {
+      if(!capi_check_interrupts(env->state(), env->current_call_frame(), &marker)) {
         env->current_ep()->return_to(env);
       }
 
@@ -333,7 +343,7 @@ namespace rubinius {
                                  size_t arg_count, Object** args)
     {
       int marker = 0;
-      if(!env->state()->check_stack(env->current_call_frame(), &marker)) {
+      if(!capi_check_interrupts(env->state(), env->current_call_frame(), &marker)) {
         env->current_ep()->return_to(env);
       }
 
@@ -502,7 +512,7 @@ extern "C" {
   VALUE rb_call_super(int argc, const VALUE *argv) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
-    Object** args = reinterpret_cast<Object**>(alloca(sizeof(Object*) * argc));
+    Object* args[argc];
     for(int i = 0; i < argc; i++) {
       args[i] = env->get_object(argv[i]);
     }
@@ -516,7 +526,7 @@ extern "C" {
     va_list varargs;
     va_start(varargs, arg_count);
 
-    Object** args = reinterpret_cast<Object**>(alloca(sizeof(Object*) * arg_count));
+    Object* args[arg_count];
 
     for(int i = 0; i < arg_count; i++) {
       args[i] = env->get_object(va_arg(varargs, VALUE));
@@ -540,7 +550,7 @@ extern "C" {
   VALUE rb_funcall2(VALUE receiver, ID method_name, int arg_count, const VALUE* v_args) {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
-    Object** args = reinterpret_cast<Object**>(alloca(sizeof(Object**) * arg_count));
+    Object* args[arg_count];
 
     for(int i = 0; i < arg_count; i++) {
       args[i] = env->get_object(v_args[i]);
@@ -564,7 +574,7 @@ extern "C" {
   {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
-    Object** args = reinterpret_cast<Object**>(alloca(sizeof(Object**) * arg_count));
+    Object* args[arg_count];
 
     for(int i = 0; i < arg_count; i++) {
       args[i] = env->get_object(v_args[i]);
@@ -603,7 +613,7 @@ extern "C" {
       return capi_yield_backend(env, blk, 0, 0);
     }
 
-    Object** vars = reinterpret_cast<Object**>(alloca(sizeof(Object*) * n));
+    Object* vars[n];
 
     va_list args;
     va_start(args, n);
@@ -628,7 +638,7 @@ extern "C" {
 
     if(Array* ary = try_as<Array>(env->get_object(array_handle))) {
       int count = ary->size();
-      Object** vars = reinterpret_cast<Object**>(alloca(sizeof(Object*) * count));
+      Object* vars[count];
 
       for(int i = 0; i < count; i++) {
         vars[i] = ary->get(env->state(), i);

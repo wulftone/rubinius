@@ -5,6 +5,45 @@ end
 
 class Encoding
   class UndefinedConversionError < EncodingError
+    attr_accessor :source_encoding_name
+    attr_accessor :destination_encoding_name
+    attr_accessor :source_encoding
+    attr_accessor :destination_encoding
+    attr_accessor :error_char
+
+    private :source_encoding_name=
+    private :destination_encoding_name=
+    private :source_encoding=
+    private :destination_encoding=
+    private :error_char=
+  end
+
+  class InvalidByteSequenceError < EncodingError
+    attr_accessor :source_encoding_name
+    attr_accessor :destination_encoding_name
+    attr_accessor :source_encoding
+    attr_accessor :destination_encoding
+    attr_accessor :error_bytes
+    attr_accessor :readagain_bytes
+    attr_writer :incomplete_input
+
+    private :source_encoding_name=
+    private :destination_encoding_name=
+    private :source_encoding=
+    private :destination_encoding=
+    private :error_bytes=
+    private :readagain_bytes=
+    private :incomplete_input=
+
+    def initialize(message="")
+      super(message)
+
+      @incomplete_input = nil
+    end
+
+    def incomplete_input?
+      @incomplete_input
+    end
   end
 
   class ConverterNotFoundError < EncodingError
@@ -13,12 +52,7 @@ class Encoding
   class CompatibilityError < EncodingError
   end
 
-  EncodingMap     = Rubinius::EncodingClass::EncodingMap
-  EncodingList    = Rubinius::EncodingClass::EncodingList
-  LocaleCharmap   = Rubinius::EncodingClass::LocaleCharmap
-  TranscodingMap  = Rubinius::EncodingClass::TranscodingMap
-
-  class Transcoder
+  class Transcoding
     attr_accessor :source
     attr_accessor :target
 
@@ -30,7 +64,7 @@ class Encoding
   class Converter
     attr_accessor :source_encoding
     attr_accessor :destination_encoding
-    attr_accessor :replacement
+    attr_reader :replacement
 
     def self.allocate
       Rubinius.primitive :encoding_converter_allocate
@@ -47,6 +81,10 @@ class Encoding
       return unless transcoding and transcoding.size == 1
 
       Encoding.find transcoding.keys.first.to_s
+    end
+
+    def self.search_convpath(from, to, options=undefined)
+      new(from, to, options).convpath
     end
 
     def initialize(from, to, options=undefined)
@@ -87,52 +125,40 @@ class Encoding
         @options = 0
       end
 
-      if replacement.nil?
-        if @destination_encoding == Encoding::UTF_8
-          @replacement = "\xef\xbf\xbd".force_encoding("utf-8")
-        else
-          @replacement = "?".force_encoding("us-ascii")
-        end
-      else
-        @replacement = Rubinius::Type.coerce_to replacement, String, :to_str
+      source_name = @source_encoding.name.upcase.to_sym
+      dest_name = @destination_encoding.name.upcase.to_sym
+
+      unless source_name == dest_name
+        @convpath, @converters = TranscodingPath[source_name, dest_name]
       end
 
-      source_name = @source_encoding.name.upcase
-      dest_name = @destination_encoding.name.upcase
-      found = false
-
-      if entry = TranscodingMap[source_name]
-        @convpath = [source_name]
-
-        if encoding = entry[dest_name]
-          @convpath << dest_name
-          found = true
-        else
-          visited = {source_name => true}
-          search = [entry]
-
-          until search.empty?
-            table = search.shift
-            table.each do |key, _|
-              next if visited.key? key
-              visited[key] = true
-
-              next unless entry = TranscodingMap[key]
-              if encoding = entry[dest_name]
-                @convpath << key << dest_name
-                found = true
-                break
-              end
-
-              search << entry
-            end
-          end
-        end
-      end
-
-      unless found
-        msg = "code converter not found (#{@source_encoding.name} to #{@destination_encoding.name}"
+      unless @convpath
+        conversion = "(#{@source_encoding.name} to #{@destination_encoding.name})"
+        msg = "code converter not found #{conversion}"
         raise ConverterNotFoundError, msg
+      end
+
+      if @options & (INVALID_REPLACE | UNDEF_REPLACE | UNDEF_HEX_CHARREF)
+        if replacement.nil?
+          if @destination_encoding == Encoding::UTF_8
+            @replacement = "\xef\xbf\xbd".force_encoding(Encoding::UTF_8)
+          else
+            @replacement = "?".force_encoding(Encoding::US_ASCII)
+          end
+        else
+          @replacement = Rubinius::Type.coerce_to replacement, String, :to_str
+        end
+
+        replacement_encoding_name = @replacement.encoding.name.upcase
+        @replacement_converters = []
+
+        @convpath.each do |enc|
+          name = enc.to_s.upcase
+          next if name == replacement_encoding_name
+
+          _, converters = TranscodingPath[replacement_encoding_name, enc]
+          @replacement_converters << name << converters
+        end
       end
     end
 
@@ -140,12 +166,12 @@ class Encoding
       str = StringValue(str)
 
       dest = ""
-      status = primitive_convert str, dest, nil, nil, PARTIAL_INPUT
+      status = primitive_convert str, dest, nil, nil, @options | PARTIAL_INPUT
 
       if status == :invalid_byte_sequence or
          status == :undefined_conversion or
          status == :incomplete_input
-        # raise an exception
+        raise last_error
       end
 
       if status == :finished
@@ -153,18 +179,41 @@ class Encoding
       end
 
       if status != :source_buffer_empty
-        raise RuntimeError, "unexpected result of Encoding::Converter#primitive_convert"
+        raise RuntimeError, "unexpected result of Encoding::Converter#primitive_convert: #{status}"
       end
 
       dest
     end
 
-    def primitive_convert(source, target, offset=nil, size=nil, options=undefined)
-      Rubinius.primitive :encoding_converter_primitive_convert
+    def primitive_convert(source, target, offset=nil, size=nil, options=0)
+      source = StringValue(source) if source
+      target = StringValue(target)
 
-      if options.equal? undefined
-        options = 0
-      elsif !options.kind_of? Fixnum
+      if offset.nil?
+        offset = target.bytesize
+      else
+        offset = Rubinius::Type.coerce_to offset, Fixnum, :to_int
+      end
+
+      if size.nil?
+        size = -1
+      else
+        size = Rubinius::Type.coerce_to size, Fixnum, :to_int
+
+        if size < 0
+          raise ArgumentError, "byte size is negative"
+        end
+      end
+
+      if offset < 0
+        raise ArgumentError, "byte offset is negative"
+      end
+
+      if offset > target.bytesize
+        raise ArgumentError, "byte offset is greater than destination buffer size"
+      end
+
+      if !options.kind_of? Fixnum
         opts = Rubinius::Type.coerce_to options, Hash, :to_hash
 
         options = 0
@@ -172,7 +221,8 @@ class Encoding
         options |= AFTER_OUTPUT if opts[:after_output]
       end
 
-      primitive_convert source, target, offset, size, options
+      Rubinius.invoke_primitive(:encoding_converter_primitive_convert,
+                                self, source, target, offset, size, options)
     end
 
     def putback(maxbytes=nil)
@@ -182,13 +232,98 @@ class Encoding
     end
 
     def finish
-      Rubinius.primitive :encoding_converter_finish
-      raise PrimitiveFailure, "Encoding::Converter#finish primitive failed"
+      dest = ""
+      status = primitive_convert nil, dest
+
+      if status == :invalid_byte_sequence or
+         status == :undefined_conversion or
+         status == :incomplete_input
+        raise last_error
+      end
+
+      if status != :finished
+        raise RuntimeError, "unexpected result of Encoding::Converter#finish: #{status}"
+      end
+
+      dest
     end
 
     def last_error
-      Rubinius.primitive :encoding_converter_last_error
-      raise PrimitiveFailure, "Encoding::Converter#last_error primitive failed"
+      error = Rubinius.invoke_primitive :encoding_converter_last_error, self
+      return if error.nil?
+
+      result = error[:result]
+      error_bytes = error[:error_bytes].dump
+      source_encoding_name = error[:source_encoding_name]
+      destination_encoding_name = error[:destination_encoding_name]
+
+      case result
+      when :invalid_byte_sequence
+        read_again_string = error[:read_again_string]
+        if read_again_string
+          msg = "#{error_bytes} followed by #{read_again_string.dump} on #{source_encoding_name}"
+        else
+          msg = "#{error_bytes} on #{source_encoding_name}"
+        end
+
+        exc = InvalidByteSequenceError.new msg
+      when :incomplete_input
+        msg = "incomplete #{error_bytes} on #{source_encoding_name}"
+
+        exc = InvalidByteSequenceError.new msg
+      when :undefined_conversion
+        error_char = error_bytes
+        if codepoint = error[:codepoint]
+          error_bytes = "U+%04X" % codepoint
+        end
+
+        if source_encoding_name.to_sym == @source_encoding.name and
+           destination_encoding_name.to_sym == @destination_encoding.name
+          msg = "#{error_bytes} from #{source_encoding_name} to #{destination_encoding_name}"
+        else
+          msg = "#{error_bytes} to #{destination_encoding_name} in conversion from #{source_encoding_name}"
+          transcoder = @converters.first
+          msg << " to #{transcoder.target}"
+        end
+
+        exc = UndefinedConversionError.new msg
+      end
+
+      Rubinius.privately do
+        exc.source_encoding_name = source_encoding_name
+        src = Rubinius::Type.try_convert_to_encoding source_encoding_name
+        exc.source_encoding = src unless src.equal? undefined
+
+        exc.destination_encoding_name = destination_encoding_name
+        dst = Rubinius::Type.try_convert_to_encoding destination_encoding_name
+        exc.destination_encoding = dst unless dst.equal? undefined
+
+        if error_char
+          error_char.force_encoding src unless src.equal? undefined
+          exc.error_char = error_char
+        end
+
+        if result == :invalid_byte_sequence or result == :incomplete_input
+          exc.error_bytes = error_bytes.force_encoding Encoding::ASCII_8BIT
+
+          if bytes = error[:read_again_bytes]
+            exc.readagain_bytes = bytes.force_encoding Encoding::ASCII_8BIT
+          end
+        end
+
+        if result == :invalid_byte_sequence
+          exc.incomplete_input = false
+        elsif result == :incomplete_input
+          exc.incomplete_input = true
+        end
+      end
+
+      exc
+    end
+
+    def primitive_errinfo
+      Rubinius.primitive :encoding_converter_primitive_errinfo
+      raise PrimitiveFailure, "Encoding::Converter#primitive_errinfo primitive failed"
     end
 
     def convpath
@@ -211,8 +346,130 @@ class Encoding
       path
     end
 
-    def self.search_convpath(from, to, options=undefined)
-      new(from, to, options).convpath
+    def replacement=(str)
+      str = StringValue(str)
+
+      @replacement = str.encode(@destination_encoding)
+    end
+
+    class TranscodingPath
+      @paths = {}
+      @load_cache = true
+      @cache_valid = false
+      @transcoders_count = TranscodingMap.size
+
+      def self.paths
+        if load_cache? and cache_threshold?
+          begin
+            path = "#{Rubinius::RUNTIME_PATH}/delta/converter_paths.rbc"
+            Rubinius::CodeLoader.load_compiled_file path
+            cache_loaded
+          rescue Object
+            disable_cache
+          end
+        end
+
+        @paths
+      end
+
+      def self.disable_cache
+        @cache_valid = false
+        @load_cache = false
+      end
+
+      def self.cache_loaded
+        @cache_valid = true
+        @load_cache = false
+      end
+
+      def self.load_cache?
+        @load_cache
+      end
+
+      def self.cache_loaded?
+        @load_cache == false and @cache_valid
+      end
+
+      def self.cache_threshold?
+        @paths.size > 5
+      end
+
+      def self.default_transcoders?
+        @transcoders_count == TranscodingMap.size
+      end
+
+      def self.cache_valid?
+        cache_loaded? and default_transcoders?
+      end
+
+      def self.[](source, target)
+        key = "[#{source}, #{target}]"
+
+        path, converters = paths[key]
+
+        unless path
+          return if cache_valid?
+          return unless path = search(source, target)
+          paths[key] = [path]
+        end
+
+        unless converters
+          converters = get_converters path
+          paths[key][1] = converters
+        end
+
+        return path, converters
+      end
+
+      def self.search(source, target)
+        if entry = TranscodingMap[source]
+          if entry[target]
+            return [source, target]
+          else
+            visited = { source => true }
+            search = { [source] => entry }
+
+            until search.empty?
+              path, table = search.shift
+
+              table.each do |key, _|
+                next if visited.key? key
+                next unless entry = TranscodingMap[key]
+
+                return path << key << target if entry[target]
+
+                unless visited.key? key
+                  search[path.dup << key] = entry
+                  visited[key] = true
+                end
+              end
+            end
+          end
+        end
+      end
+
+      def self.get_converters(path)
+        converters = []
+        total = path.size - 1
+        i = 0
+
+        while i < total
+          entry = TranscodingMap[path[i]][path[i + 1]]
+
+          if entry.kind_of? String
+            lib = "#{Rubinius::LIB_PATH}/19/encoding/converter/#{entry}"
+            Rubinius::NativeMethod.load_extension lib, entry
+
+            entry = TranscodingMap[path[i]][path[i + 1]]
+          end
+
+          converters << entry
+
+          i += 1
+        end
+
+        converters
+      end
     end
   end
 

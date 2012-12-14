@@ -95,8 +95,8 @@ namespace rubinius {
       obj->inflated_header()->set_object(obj);
     }
 
-    obj->flags().zone = MatureObjectZone;
-    obj->flags().age = 0;
+    obj->set_zone(MatureObjectZone);
+    obj->set_age(0);
 
     obj->set_in_immix();
 
@@ -122,7 +122,7 @@ namespace rubinius {
       InflatedHeader* ih = obj->deflate_header();
       ih->reset_object(copy);
       State state_obj(state());
-      if(!copy->set_inflated_header(&state_obj, ih)) {
+      if(!copy->set_inflated_header(&state_obj, ih, obj->current_header())) {
         rubinius::bug("Massive IMMIX inflated header screwup.");
       }
     }

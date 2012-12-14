@@ -148,12 +148,12 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
     eLockError
   };
 
-  enum AuxWordMeaning {
+  typedef enum {
     eAuxWordEmpty  = 0,
     eAuxWordObjID  = 1,
     eAuxWordLock   = 2,
     eAuxWordHandle = 3
-  };
+  } aux_meaning;
 
   const static int InflatedMask  = 1;
   const static int cAuxLockTIDShift = 8;
@@ -166,8 +166,8 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
 #ifdef RBX_LITTLE_ENDIAN
     // inflated MUST be first, because rest is used as a pointer
     unsigned int inflated        : 1;
-    unsigned int meaning         : 2;
     object_type  obj_type        : 8;
+    aux_meaning  meaning         : 2;
     gc_zone      zone            : 2;
     unsigned int age             : 4;
 
@@ -199,9 +199,9 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
 
     unsigned int age             : 4;
     gc_zone      zone            : 2;
+    aux_meaning  meaning         : 2;
     object_type  obj_type        : 8;
     // inflated MUST be first, because rest is used as a pointer
-    unsigned int meaning         : 2;
     unsigned int inflated        : 1;
 #endif
 
@@ -248,7 +248,7 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       : mutex_(false)
     {}
 
-    ObjectFlags& flags() {
+    ObjectFlags flags() {
       return flags_;
     }
 
@@ -299,7 +299,68 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
     }
 
     void set_handle(STATE, capi::Handle* handle) {
-      handle_ = handle;
+      atomic::write(&handle_, handle);
+    }
+
+    unsigned int inc_age() {
+      return flags_.age++;
+    }
+
+    void set_age(unsigned int age) {
+      flags_.age = age;
+    }
+
+    void mark(unsigned int which) {
+      flags_.Marked = which;
+    }
+
+    void clear_mark() {
+      flags_.Marked = 0;
+    }
+
+    bool pin() {
+      flags_.Pinned = 1;
+      return true;
+    }
+
+    void unpin() {
+      flags_.Pinned = 0;
+    }
+
+    void set_in_immix() {
+      flags_.InImmix = 1;
+    }
+
+    void set_zone(gc_zone zone) {
+      flags_.zone = zone;
+    }
+
+    void set_lock_contended() {
+      flags_.LockContended = 1;
+    }
+
+    void clear_lock_contended() {
+      flags_.LockContended = 0;
+    }
+
+    void set_remember() {
+      flags_.Remember = 1;
+    }
+
+    void clear_remember() {
+      flags_.Remember = 0;
+    }
+
+    void set_frozen(int val = 1) {
+      flags_.Frozen = val;
+    }
+
+    void set_tainted(int val = 1) {
+      flags_.Tainted = val;
+    }
+
+    void set_untrusted(int val = 1) {
+      flags_.Untrusted = val;
     }
 
     bool update(STATE, HeaderWord header);
@@ -312,6 +373,10 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
     void unlock_mutex_for_terminate(STATE, GCToken gct);
 
     void wakeup();
+
+    private:
+
+
   };
 
   class ObjectHeader {
@@ -358,42 +423,65 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       return header_to_inflated_header(header);
     }
 
-    bool set_inflated_header(STATE, InflatedHeader* ih);
+    bool set_inflated_header(STATE, InflatedHeader* ih, HeaderWord orig);
+
+    HeaderWord current_header() {
+      return header;
+    }
 
     InflatedHeader* deflate_header();
 
-    ObjectFlags& flags() const {
-      if(inflated_header_p()) return inflated_header()->flags();
-      return const_cast<ObjectFlags&>(header.f);
+    /*
+     * We return a copy here for safe reading. This means that
+     * even though the reader might see slightly outdated information,
+     * it will not see total garbage when the race here with inflated
+     * the header.
+     *
+     * All code using these flags either checks flags that don't change
+     * such as obj_type or uses this before attempting a CAS to modify
+     * it. If there is a race the CAS will fail and will be reattempted
+     * so it will work correctly.
+     *
+     * Don't use inflated_header_p() here since that checks the current
+     * header state, but after returning it might be that the header
+     * has been inflated in the mean while.
+     */
+    ObjectFlags flags() const {
+      HeaderWord copy = header;
+      if(copy.f.inflated) {
+        return inflated_header()->flags();
+      }
+      return copy.f;
     }
 
-    ObjectFlags& flags() {
-      if(inflated_header_p()) return inflated_header()->flags();
-      return header.f;
+    ObjectFlags flags() {
+      HeaderWord copy = header;
+      if(copy.f.inflated) {
+        return inflated_header()->flags();
+      }
+      return copy.f;
     }
 
     gc_zone zone() const {
       return flags().zone;
     }
 
-    void set_zone(gc_zone zone) {
-      flags().zone = zone;
-    }
+    void set_zone(gc_zone zone);
 
     unsigned int age() const {
       return flags().age;
     }
 
-    unsigned int inc_age() {
-      return flags().age++;
-    }
+    unsigned int inc_age();
+    void set_age(unsigned int age);
 
-    void set_age(unsigned int age) {
-      flags().age = age;
-    }
-
+    /*
+     * Method is only used on first object initialization so it's
+     * safe to not use an atomic swap here. Changing an object type
+     * after it was constructed is also a big no no anyway.
+     */
     void set_obj_type(object_type type) {
-      flags().obj_type = type;
+      header.f.obj_type = type;
     }
 
     capi::Handle* handle(STATE);
@@ -427,26 +515,19 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
     void clear_body_to_null(size_t bytes);
 
     /* Initialize the objects data with the most basic info. This is done
-     * right after an object is created. */
+     * right after an object is created.
+     *
+     * Can only be used when the caller is sure that the object doesn't
+     * have an inflated header, which is true of any brand new (ie fresh)
+     * objects.
+     */
     void init_header(gc_zone loc, object_type type) {
       header.flags64 = 0;
-      flags().obj_type = type;
-      set_zone(loc);
+      header.f.obj_type = type;
+      header.f.zone = loc;
     }
 
     void init_header(Class* cls, gc_zone loc, object_type type) {
-      header.flags64 = 0;
-      flags().obj_type = type;
-      set_zone(loc);
-
-      klass_ = cls;
-      ivars_ = cNil;
-    }
-
-    // Can only be used when the caller is sure that the object doesn't
-    // have an inflated header, which is true of any brand new (ie fresh)
-    // objects.
-    void init_fresh_header(Class* cls, gc_zone loc, object_type type) {
       header.flags64 = 0;
       header.f.obj_type = type;
       header.f.zone = loc;
@@ -497,10 +578,6 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       return flags().Forwarded == 1;
     }
 
-    void clear_forwarded() {
-      flags().Forwarded = 0;
-    }
-
     Object* forward() const {
       return ivars_;
     }
@@ -542,61 +619,41 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       return flags().Marked == which;
     }
 
-    void mark(unsigned int which) {
-      flags().Marked = which;
-    }
+    void mark(unsigned int which);
 
     int which_mark() const {
       return flags().Marked;
     }
 
-    void clear_mark() {
-      flags().Marked = 0;
-    }
+    void clear_mark();
 
     bool pinned_p() const {
       return flags().Pinned == 1;
     }
 
-    bool pin() {
-      // Can't pin young objects!
-      if(young_object_p()) return false;
-
-      flags().Pinned = 1;
-      return true;
-    }
-
-    void unpin() {
-      flags().Pinned = 0;
-    }
+    bool pin();
+    void unpin();
 
     bool in_immix_p() const {
       return flags().InImmix == 1;
     }
 
-    void set_in_immix() {
-      flags().InImmix = 1;
-    }
+    void set_in_immix();
 
     bool remembered_p() const {
       return flags().Remember == 1;
     }
 
-    void set_remember() {
-      flags().Remember = 1;
-    }
-
-    void clear_remember() {
-      flags().Remember = 0;
-    }
+    void set_remember();
+    void clear_remember();
+    void set_lock_contended();
+    void clear_lock_contended();
 
     bool is_frozen_p() const {
       return flags().Frozen == 1;
     }
 
-    void set_frozen(int val=1) {
-      flags().Frozen = val;
-    }
+    void set_frozen(int val=1);
 
     bool is_tainted_p() const {
       if(reference_p()) {
@@ -605,9 +662,7 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       return false;
     }
 
-    void set_tainted(int val=1) {
-      flags().Tainted = val;
-    }
+    void set_tainted(int val=1);
 
     bool is_untrusted_p() const {
       if(reference_p()) {
@@ -616,9 +671,7 @@ Object* const cUndef = reinterpret_cast<Object*>(0x22L);
       return false;
     }
 
-    void set_untrusted(int val=1) {
-      flags().Untrusted = val;
-    }
+    void set_untrusted(int val=1);
 
     uint32_t object_id() {
       // Pull this out into a local so that we don't see any concurrent

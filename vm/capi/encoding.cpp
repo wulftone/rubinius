@@ -143,6 +143,8 @@ extern "C" {
     NativeMethodEnvironment* env = NativeMethodEnvironment::get();
 
     Object* val = env->get_object(obj);
+    if(!val->reference_p() && !val->symbol_p()) return -1;
+
     Encoding* enc = Encoding::get_object_encoding(env->state(), val);
 
     if(enc->nil_p()) return 0;
@@ -159,9 +161,14 @@ extern "C" {
     Encoding::set_object_encoding(env->state(), val, enc);
   }
 
-  rb_encoding* rb_enc_compatible(VALUE str1, VALUE str2) {
-    // TODO
-    return rb_enc_get(str1);
+  rb_encoding* rb_enc_compatible(VALUE a, VALUE b) {
+    VALUE result = rb_funcall(rb_cEncoding, rb_intern("compatible?"), 2, a, b);
+
+    if(result == Qnil) {
+      return 0;
+    } else {
+      return rb_to_encoding(result);
+    }
   }
 
   rb_encoding* rb_to_encoding(VALUE obj) {
@@ -265,7 +272,7 @@ extern "C" {
     if(enc) {
       return rb_enc_find_index(rb_enc_name(enc));
     } else {
-      return 0;
+      return Encoding::eBinary;
     }
   }
 
