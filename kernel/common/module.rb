@@ -523,8 +523,7 @@ class Module
   end
 
   def ===(inst)
-    Rubinius.primitive :module_case_compare
-    raise PrimitiveFailure, "Module#=== primitive failed"
+    Rubinius::Type.object_kind_of?(inst, self)
   end
 
   # Is an autoload trigger defined for the given path?
@@ -582,6 +581,12 @@ class Module
   private :method_undefined
 
   def initialize_copy(other)
+    # If the method table is already different, we already
+    # initialized this module.
+    unless @method_table == other.method_table
+      raise TypeError, "already initialized module"
+    end
+
     @method_table = other.method_table.dup
 
     sc_s = Rubinius::Type.object_singleton_class self

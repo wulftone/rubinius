@@ -14,12 +14,11 @@ module Rubinius
     def self.new(cnt)
       obj = allocate_sized cnt
       Rubinius.asm(obj) do |obj|
-        push_block
         run obj
-        send_with_block :initialize, 0, true
+        send :initialize, 0, true
       end
 
-      return obj
+      obj
     end
 
     def fetch_bytes(start, count)
@@ -53,7 +52,7 @@ module Rubinius
     end
 
     def dup(cls=nil)
-      cls ||= self.class
+      cls ||= Rubinius::Type.object_class(self)
       obj = cls.new(self.size)
 
       Rubinius.invoke_primitive :object_copy_object, obj, self

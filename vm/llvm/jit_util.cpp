@@ -77,7 +77,19 @@ extern "C" {
       return NULL;
     }
 
-    return obj;
+    return cNil;
+  }
+
+  Object* rbx_is_frozen(STATE, Object* obj) {
+    return obj->frozen_p(state);
+  }
+
+  Object* rbx_is_untrusted(STATE, Object* obj) {
+    return obj->untrusted_p(state);
+  }
+
+  Object* rbx_is_tainted(STATE, Object* obj) {
+    return obj->tainted_p(state);
   }
 
   void rbx_begin_profiling(STATE, void* data, Executable* exec, Module* mod, Arguments& args,
@@ -724,41 +736,6 @@ extern "C" {
     CPP_CATCH
   }
 
-  Object* rbx_meta_send_op_minus(STATE, CallFrame* call_frame, Object** stk) {
-    Object* left =  stk[0];
-    Object* right = stk[1];
-
-    if(both_fixnum_p(left, right)) {
-      return reinterpret_cast<Fixnum*>(left)->sub(state,
-          reinterpret_cast<Fixnum*>(right));
-
-    }
-
-    return rbx_simple_send(state, call_frame, G(sym_minus), 1, stk);
-  }
-
-  Object* rbx_meta_send_op_nequal(STATE, CallFrame* call_frame, Object** stk) {
-    Object* t1 = stk[0];
-    Object* t2 = stk[1];
-    /* If both are not references, compare them directly. */
-    if(!t1->reference_p() && !t2->reference_p()) {
-      return (t1 == t2) ? cFalse : cTrue;
-    }
-
-    return rbx_simple_send(state, call_frame, G(sym_nequal), 1, stk);
-  }
-
-  Object* rbx_meta_send_op_tequal(STATE, CallFrame* call_frame, Object** stk) {
-    Object* t1 = stk[0];
-    Object* t2 = stk[1];
-    /* If both are fixnums, or both are symbols, compare the ops directly. */
-    if((t1->fixnum_p() && t2->fixnum_p()) || (t1->symbol_p() && t2->symbol_p())) {
-      return (t1 == t2) ? cFalse : cTrue;
-    }
-
-    return rbx_simple_send(state, call_frame, G(sym_tequal), 1, stk);
-  }
-
   Object* rbx_passed_arg(STATE, Arguments& args, int index) {
     return (index < (int)args.total()) ? cTrue : cFalse;
   }
@@ -1257,10 +1234,6 @@ extern "C" {
     return cNil;
   }
 
-  bool rbx_check_class(STATE, Object* obj, int id) {
-    return obj->lookup_begin(state)->class_id() == id;
-  }
-
   Object* rbx_get_ivar(STATE, Object* self, Symbol* name) {
     return self->get_ivar(state, name);
   }
@@ -1547,6 +1520,13 @@ extern "C" {
 
   Object* rbx_create_bignum(STATE, native_int arg) {
     return Bignum::from(state, arg);
+  }
+
+  Object* rbx_regexp_set_last_match(STATE, Object* obj, CallFrame* call_frame) {
+    if(CallFrame* parent = call_frame->previous) {
+      parent->set_last_match(state, obj);
+    }
+    return obj;
   }
 
 }

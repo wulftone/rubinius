@@ -198,22 +198,26 @@ namespace rubinius {
     onig_free(old_reg);
   }
 
+#define REGEXP_ONIG_ERROR_MESSAGE_LEN   ONIG_MAX_ERROR_MESSAGE_LEN + 1024
+
   // Called with the onig_lock held.
-  void Regexp::maybe_recompile(STATE, String* string) {
+  bool Regexp::maybe_recompile(STATE, String* string) {
     const UChar *pat;
     const UChar *end;
     OnigEncoding enc;
     OnigErrorInfo err_info;
     int err;
 
-    if(fixed_encoding_) return;
+    if(fixed_encoding_) return true;
 
     enc = string->get_encoding_kcode_fallback(state);
 
-    if(enc == onig_data->enc) return;
+    if(enc == onig_data->enc) return true;
 
-    pat = (UChar*)source()->byte_address();
-    end = pat + source()->byte_size();
+    Encoding* source_enc = source()->encoding(state);
+    String* converted = source()->convert_escaped(state, source_enc, fixed_encoding_);
+    pat = (UChar*)converted->byte_address();
+    end = pat + converted->byte_size();
 
     int options = onig_data->options;
     OnigEncoding orig_enc = onig_data->enc;
@@ -230,16 +234,20 @@ namespace rubinius {
 
       // Ok, wtf. Well, no way to proceed now.
       if(err != ONIG_NORMAL) {
-        OnigUChar buf[1024];
-        onig_error_code_to_str((UChar*)buf, err, &err_info);
-        std::cout << "Fatal ONIG error: " << buf << "\n";
-        assert(err == ONIG_NORMAL);
+        UChar onig_err_buf[ONIG_MAX_ERROR_MESSAGE_LEN];
+        char err_buf[REGEXP_ONIG_ERROR_MESSAGE_LEN];
+        onig_error_code_to_str(onig_err_buf, err, &err_info);
+        snprintf(err_buf, REGEXP_ONIG_ERROR_MESSAGE_LEN, "%s: %s", onig_err_buf, pat);
+
+        Exception::regexp_error(state, err_buf);
+        return false;
       }
 
       fixed_encoding_ = true;
     }
 
     make_managed(state);
+    return true;
   }
 
   /*
@@ -308,9 +316,9 @@ namespace rubinius {
 
     if(err != ONIG_NORMAL) {
       UChar onig_err_buf[ONIG_MAX_ERROR_MESSAGE_LEN];
-      char err_buf[1024];
+      char err_buf[REGEXP_ONIG_ERROR_MESSAGE_LEN];
       onig_error_code_to_str(onig_err_buf, err, &err_info);
-      snprintf(err_buf, 1024, "%s: %s", onig_err_buf, pat);
+      snprintf(err_buf, REGEXP_ONIG_ERROR_MESSAGE_LEN, "%s: %s", onig_err_buf, pat);
 
       Exception::regexp_error(state, err_buf);
       return 0;
@@ -444,7 +452,7 @@ namespace rubinius {
 
     lock_.lock();
 
-    maybe_recompile(state, string);
+    if(!maybe_recompile(state, string)) return 0;
 
     int begin_reg[10] = { ONIG_REGION_NOTPOS, ONIG_REGION_NOTPOS,
                          ONIG_REGION_NOTPOS, ONIG_REGION_NOTPOS,
@@ -524,7 +532,7 @@ namespace rubinius {
 
     lock_.lock();
 
-    maybe_recompile(state, string);
+    if(!maybe_recompile(state, string)) return 0;
 
     int begin_reg[10] = { ONIG_REGION_NOTPOS, ONIG_REGION_NOTPOS,
                          ONIG_REGION_NOTPOS, ONIG_REGION_NOTPOS,
@@ -580,7 +588,7 @@ namespace rubinius {
 
     lock_.lock();
 
-    maybe_recompile(state, string);
+    if(!maybe_recompile(state, string)) return 0;
 
     max = string->byte_size();
     native_int pos = start->to_native();

@@ -141,7 +141,7 @@ namespace rubinius {
       bail_out_ = new_block("bail_out");
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_
       };
 
@@ -165,7 +165,7 @@ namespace rubinius {
       b().CreateBr(info().return_pad());
 
       set_block(ret_raise_val);
-      Value* crv = f.clear_raise_value.call(&vm_, 1, "crv", b());
+      Value* crv = f.clear_raise_value.call(&state_, 1, "crv", b());
       if(use_full_scope_) flush_scope_to_heap(vars_);
 
       info().add_return_value(crv, current_block());
@@ -255,7 +255,7 @@ namespace rubinius {
       brk << CallFrameTy;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_
       };
 
@@ -278,7 +278,7 @@ namespace rubinius {
 
       Signature clear(ls_, ObjType);
       clear << StateTy;
-      Value* crv = clear.call("rbx_clear_raise_value", &vm_, 1, "crv", b());
+      Value* crv = clear.call("rbx_clear_raise_value", &state_, 1, "crv", b());
 
       b().CreateBr(cont);
 
@@ -319,7 +319,7 @@ namespace rubinius {
 
       set_block(check_active);
 
-      if(!state()->config().jit_check_debugging) {
+      if(!llvm_state()->config().jit_check_debugging) {
         b().CreateBr(cont);
         return check_active;
       }
@@ -354,7 +354,7 @@ namespace rubinius {
       Value* root_callframe = info().top_parent_call_frame();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         cint(next_ip_),
         sp,
@@ -433,12 +433,14 @@ namespace rubinius {
 
       // the actual values of which are the calling arguments
       Value* call_args[] = {
-        vm_,
+        state_,
         cint(which)
       };
 
       // call the function we just described using the builder
-      Value* val = sig.call("rbx_push_system_object", call_args, 2, "so", b());
+      CallInst* val = sig.call("rbx_push_system_object", call_args, 2, "so", b());
+      val->setOnlyReadsMemory();
+      val->setDoesNotThrow();
       stack_push(val);
     }
 
@@ -580,17 +582,9 @@ namespace rubinius {
     }
 
     void visit_check_frozen() {
-      Signature sig(ls_, "Object");
+      Value* recv = stack_top();
 
-      sig << "State";
-      sig << "CallFrame";
-      sig << "Object";
-
-      Value* call_args[] = { vm_, call_frame_, stack_top() };
-
-      Value* res = sig.call("rbx_check_frozen", call_args, 3, "", b());
-
-      check_for_exception(res, false);
+      check_is_frozen(recv);
     }
 
     void check_fixnums(Value* left, Value* right, BasicBlock* if_true,
@@ -666,7 +660,7 @@ namespace rubinius {
       Value* execute = b().CreateLoad(execute_pos, "execute");
 
       Value* call_args[] = {
-        vm_,
+        state_,
         cache_const,
         call_frame_,
         out_args_
@@ -702,7 +696,7 @@ namespace rubinius {
       setup_out_args_with_block(args);
 
       Value* call_args[] = {
-        vm_,
+        state_,
         cache_const,
         call_frame_,
         out_args_
@@ -730,7 +724,7 @@ namespace rubinius {
       }
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         constant(name),
         clong(args),
@@ -759,7 +753,7 @@ namespace rubinius {
       }
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         constant(name),
         clong(args),
@@ -787,7 +781,7 @@ namespace rubinius {
           ptr_type("InlineCache"), "cast_to_ptr");
 
       Value* args[] = {
-        vm_,
+        state_,
         call_frame_,
         cache_const,
         recv
@@ -1089,7 +1083,7 @@ namespace rubinius {
           module_->getOrInsertFunction("rbx_string_dup", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         stack_pop()
       };
@@ -1208,7 +1202,7 @@ namespace rubinius {
             ls_->module()->getOrInsertFunction("rbx_create_array", ft));
 
         std::vector<Value*> outgoing_args;
-        outgoing_args.push_back(vm());
+        outgoing_args.push_back(state_);
 
         int ary_size;
         if(block_arg_shift_ >= (int)inline_args->size()) {
@@ -1288,7 +1282,7 @@ namespace rubinius {
 
       for(int i = count - 1; i >= 0; --i) {
         Value* call_args[] = {
-          vm_,
+          state_,
           cint(i),
           cint(jbb->start_ip),
           cint(jbb->sp),
@@ -1323,7 +1317,7 @@ namespace rubinius {
       Value* root_callframe = info().top_parent_call_frame();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         cint(current_ip_),
         sp,
@@ -1348,9 +1342,9 @@ namespace rubinius {
       if(invoker == invoke_object_class && args == 1) {
         Value* obj = stack_back(0);
 
-        type::KnownType kt = type::KnownType::extract(state(), obj);
+        type::KnownType kt = type::KnownType::extract(llvm_state(), obj);
         if(kt.instance_p() && !kt.singleton_instance_p()) {
-          if(state()->config().jit_inline_debug) {
+          if(llvm_state()->config().jit_inline_debug) {
             context().inline_log("inlining") << "direct class of reference\n";
           }
 
@@ -1361,7 +1355,7 @@ namespace rubinius {
           return;
         }
 
-        if(state()->config().jit_inline_debug) {
+        if(llvm_state()->config().jit_inline_debug) {
           context().inline_log("inlining") << "custom object_class invoker\n";
         }
 
@@ -1398,7 +1392,7 @@ namespace rubinius {
 
       Value* arg_ary = stack_objects(args);
 
-      Value* call_args[] = { vm_, call_frame_, arg_ary, cint(args) };
+      Value* call_args[] = { state_, call_frame_, arg_ary, cint(args) };
 
       Value* ptr = b().CreateIntToPtr(
           clong(reinterpret_cast<uintptr_t>(invoker)),
@@ -1456,7 +1450,7 @@ namespace rubinius {
       // If we have tried to reoptimize here a few times and failed, we use
       // a regular send as the fallback so we don't try to keep reoptimizing in
       // the future.
-      if(cache->seen_classes_overflow() > state()->shared().config.jit_deoptimize_overflow_threshold) {
+      if(cache->seen_classes_overflow() > llvm_state()->shared().config.jit_deoptimize_overflow_threshold) {
         inl.use_send_for_failure();
       }
 
@@ -1518,7 +1512,7 @@ namespace rubinius {
     }
 
     void visit_call_custom(opcode which, opcode args) {
-      if(state()->config().jit_inline_debug) {
+      if(llvm_state()->config().jit_inline_debug) {
         ls_->log() << "generate: call_custom\n";
       }
 
@@ -1567,7 +1561,7 @@ namespace rubinius {
           sig << ls_->Int32Ty;
 
           Value* call_args[] = {
-            vm_,
+            state_,
             creator->call_frame(),
             cint(ib->which())
           };
@@ -1613,7 +1607,7 @@ namespace rubinius {
           module_->getOrInsertFunction("rbx_create_block_multi", ft));
 
         std::vector<Value*> call_args;
-        call_args.push_back(vm_);
+        call_args.push_back(state_);
         call_args.push_back(get_literal(which));
 
         std::vector<JITMethodInfo*> mis;
@@ -1644,7 +1638,7 @@ namespace rubinius {
           module_->getOrInsertFunction("rbx_create_block", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         cint(which)
       };
@@ -1695,7 +1689,7 @@ namespace rubinius {
           InlineDecision decision = inline_policy()->inline_p(
                                       block_code->machine_code(), opts);
           if(decision == cTooComplex) {
-            if(state()->config().jit_inline_debug) {
+            if(llvm_state()->config().jit_inline_debug) {
               context().inline_log("NOT inlining")
                         << "block was too complex\n";
             }
@@ -1830,7 +1824,7 @@ use_send:
           module_->getOrInsertFunction("rbx_cast_array", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         stack_pop()
       };
@@ -1852,7 +1846,7 @@ use_send:
           module_->getOrInsertFunction("rbx_cast_multi_value", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         stack_pop()
       };
@@ -1897,7 +1891,7 @@ use_send:
       sig << "CallFrame";
 
       Value* args[] = {
-        vm_,
+        state_,
         call_frame_
       };
 
@@ -1952,7 +1946,7 @@ use_send:
       sig << ObjType;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         constant(cache->name),
         stack_top()
@@ -1980,7 +1974,7 @@ use_send:
           module_->getOrInsertFunction("rbx_add_scope", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         stack_pop()
       };
@@ -2053,7 +2047,7 @@ use_send:
       flush();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         constant(as<Symbol>(literal(name))),
         cint(cache)
@@ -2096,12 +2090,15 @@ use_send:
       flush();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         constant(as<Symbol>(literal(name)))
       };
 
-      Value* ret = b().CreateCall(func, call_args, "push_const_fast");
+      CallInst* ret = b().CreateCall(func, call_args, "push_const_fast");
+      ret->setOnlyReadsMemory();
+      ret->setDoesNotThrow();
+
       check_for_exception(ret);
       stack_push(ret);
     }
@@ -2121,7 +2118,7 @@ use_send:
           module_->getOrInsertFunction("rbx_set_const", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         constant(as<Symbol>(literal(name))),
         stack_top()
@@ -2145,7 +2142,7 @@ use_send:
 
       Value* val = stack_pop();
       Value* call_args[] = {
-        vm_,
+        state_,
         constant(as<Symbol>(literal(name))),
         stack_top(),
         val
@@ -2171,7 +2168,7 @@ use_send:
           module_->getOrInsertFunction("rbx_set_literal", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         cint(which),
         stack_top()
@@ -2188,7 +2185,7 @@ use_send:
       sig << "CallFrame";
 
       Value* args[] = {
-        vm_,
+        state_,
         call_frame_
       };
 
@@ -2244,7 +2241,7 @@ use_send:
               ls_->module()->getOrInsertFunction("rbx_create_array", ft));
 
           std::vector<Value*> outgoing_args;
-          outgoing_args.push_back(vm());
+          outgoing_args.push_back(state_);
           outgoing_args.push_back(cint(inline_args->size()));
 
           for(size_t i = 0; i < inline_args->size(); i++) {
@@ -2267,7 +2264,7 @@ use_send:
             module_->getOrInsertFunction("rbx_cast_for_single_block_arg", ft));
 
         Value* call_args[] = {
-          vm_,
+          state_,
           args_
         };
 
@@ -2289,7 +2286,7 @@ use_send:
               ls_->module()->getOrInsertFunction("rbx_cast_for_multi_block_arg_varargs", ft));
 
           std::vector<Value*> outgoing_args;
-          outgoing_args.push_back(vm());
+          outgoing_args.push_back(state_);
           outgoing_args.push_back(call_frame_);
           outgoing_args.push_back(cint(inline_args->size()));
 
@@ -2312,7 +2309,7 @@ use_send:
         sig << ptr_type("Arguments");
 
         Value* call_args[] = {
-          vm_,
+          state_,
           call_frame_,
           args_
         };
@@ -2339,7 +2336,7 @@ use_send:
               ls_->module()->getOrInsertFunction("rbx_create_array", ft));
 
           std::vector<Value*> outgoing_args;
-          outgoing_args.push_back(vm());
+          outgoing_args.push_back(state_);
           outgoing_args.push_back(cint(inline_args->size()));
 
           for(size_t i = 0; i < inline_args->size(); i++) {
@@ -2350,7 +2347,7 @@ use_send:
             b().CreateCall(func, outgoing_args, "ary");
 
           Value* outargs2[] = {
-            vm(),
+            state_,
             cint(1),
             ary
           };
@@ -2368,7 +2365,7 @@ use_send:
               ls_->module()->getOrInsertFunction("rbx_cast_for_splat_block_arg_varargs", ft));
 
           std::vector<Value*> outgoing_args;
-          outgoing_args.push_back(vm());
+          outgoing_args.push_back(state_);
           outgoing_args.push_back(call_frame_);
           outgoing_args.push_back(cint(inline_args->size()));
 
@@ -2388,7 +2385,7 @@ use_send:
         sig << ptr_type("Arguments");
 
         Value* call_args[] = {
-          vm_,
+          state_,
           call_frame_,
           args_
         };
@@ -2441,7 +2438,7 @@ use_send:
           sig << ls_->Int32Ty;
 
           Value* call_args[] = {
-            vm_,
+            state_,
             nfo->call_frame(),
             stack_top(),
             cint(depth),
@@ -2488,7 +2485,7 @@ use_send:
           module_->getOrInsertFunction("rbx_set_local_depth", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         stack_pop(),
         cint(depth),
@@ -2552,7 +2549,7 @@ use_send:
           sig << ls_->Int32Ty;
 
           Value* call_args[] = {
-            vm_,
+            state_,
             nfo->call_frame(),
             cint(depth),
             cint(index)
@@ -2600,7 +2597,7 @@ use_send:
           module_->getOrInsertFunction("rbx_push_local_depth", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         cint(depth),
         cint(index)
@@ -2721,7 +2718,7 @@ use_send:
           "block");
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         block_obj,
         cint(count),
@@ -2752,7 +2749,7 @@ use_send:
           "block");
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         block_obj,
         cint(count),
@@ -2784,7 +2781,7 @@ use_send:
       flush();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_
       };
 
@@ -2805,7 +2802,7 @@ use_send:
           ptr_type("InlineCache"), "cast_to_ptr");
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         cache_const,
         cint(serial),
@@ -2830,7 +2827,7 @@ use_send:
           ptr_type("InlineCache"), "cast_to_ptr");
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         cache_const,
         cint(serial),
@@ -2894,7 +2891,7 @@ use_send:
         Function* func = cast<Function>(
             module_->getOrInsertFunction("rbx_raising_exception", ft));
 
-        Value* call_args[] = { vm_ };
+        Value* call_args[] = { state_ };
         Value* isit = b().CreateCall(func, call_args, "rae");
 
         // Chain to an existing handler.
@@ -2961,7 +2958,7 @@ use_send:
       sig << ObjType;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         stack_top()
       };
@@ -2978,7 +2975,7 @@ use_send:
       sig << ObjType;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         stack_top()
       };
@@ -3011,7 +3008,7 @@ use_send:
       sig << ObjType;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         stack_top()
       };
@@ -3029,7 +3026,7 @@ use_send:
       Function* func = cast<Function>(
           module_->getOrInsertFunction("rbx_current_exception", ft));
 
-      Value* call_args[] = { vm_ };
+      Value* call_args[] = { state_ };
 
       stack_push(b().CreateCall(func, call_args, "ce"));
     }
@@ -3045,7 +3042,7 @@ use_send:
       Function* func = cast<Function>(
           module_->getOrInsertFunction("rbx_clear_exception", ft));
 
-      Value* call_args[] = { vm_ };
+      Value* call_args[] = { state_ };
 
       b().CreateCall(func, call_args);
     }
@@ -3059,7 +3056,7 @@ use_send:
       Function* func = cast<Function>(
           module_->getOrInsertFunction("rbx_push_exception_state", ft));
 
-      Value* call_args[] = { vm_ };
+      Value* call_args[] = { state_ };
 
       stack_push(b().CreateCall(func, call_args));
     }
@@ -3075,7 +3072,7 @@ use_send:
       Function* func = cast<Function>(
           module_->getOrInsertFunction("rbx_restore_exception_state", ft));
 
-      Value* call_args[] = { vm_, call_frame_, stack_pop() };
+      Value* call_args[] = { state_, call_frame_, stack_pop() };
 
       b().CreateCall(func, call_args);
     }
@@ -3089,7 +3086,7 @@ use_send:
       sig << ObjType;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         cint(which),
         stack_pop()
@@ -3111,7 +3108,7 @@ use_send:
 
       Value* top = stack_pop();
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         top,
         stack_pop()
@@ -3130,7 +3127,7 @@ use_send:
 
       Value* top = stack_pop();
       Value* call_args[] = {
-        vm_,
+        state_,
         top,
         stack_pop()
       };
@@ -3199,7 +3196,7 @@ use_send:
       sig << ObjArrayTy;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         cint(count),
         stack_objects(count)
       };
@@ -3222,7 +3219,7 @@ use_send:
         sig << ObjArrayTy;
 
         Value* call_args[] = {
-          vm_,
+          state_,
           call_frame_,
           cint(count),
           stack_objects(count + 1)
@@ -3255,7 +3252,7 @@ use_send:
         sig << ls_->Int32Ty;
 
         Value* call_args[] = {
-          vm_,
+          state_,
           args_,
           cint(count)
         };
@@ -3273,7 +3270,7 @@ use_send:
       sig << ls_->Int32Ty;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         args_,
         cint(count)
       };
@@ -3291,21 +3288,7 @@ use_send:
     }
 
     void visit_push_type() {
-      // we're calling something that returns an Object
-      Signature sig(ls_, ObjType);
-      // given a system state and a 32bit int
-      sig << StateTy;
-      sig << ls_->Int32Ty;
-
-      // the actual values of which are the calling arguments
-      Value* call_args[] = {
-        vm_,
-        cint(2)
-      };
-
-      // call the function we just described using the builder
-      Value* val = sig.call("rbx_push_system_object", call_args, 2, "so", b());
-      stack_push(val, type::KnownType::type());
+      push_system_object(2);
     }
 
     void visit_push_mirror() {
@@ -3389,7 +3372,7 @@ use_send:
       Value* self = get_self();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         self,
         constant(as<Symbol>(literal(which)))
       };
@@ -3456,7 +3439,7 @@ use_send:
       Value* self = get_self();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         self,
         constant(as<Symbol>(literal(which))),
@@ -3477,7 +3460,7 @@ use_send:
       Value* self = get_self();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         self,
         cint(which)
       };
@@ -3500,7 +3483,7 @@ use_send:
       Value* self = get_self();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         self,
         cint(which),
         stack_top()
@@ -3528,7 +3511,7 @@ use_send:
       sig << ObjArrayTy;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         stack_back_position(0)
       };
@@ -3549,7 +3532,7 @@ use_send:
       Value* val = stack_pop();
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         val,
         stack_pop()
@@ -3570,7 +3553,7 @@ use_send:
       sig << ObjArrayTy;
 
       Value* call_args[] = {
-        vm_,
+        state_,
         call_frame_,
         cint(count),
         stack_objects(count)

@@ -6,6 +6,8 @@
 #include "builtin/fixnum.hpp"
 #include "builtin/symbol.hpp"
 #include "builtin/tuple.hpp"
+#include "builtin/bytearray.hpp"
+#include "builtin/regexp.hpp"
 #include "inline_cache.hpp"
 
 #include "llvm/offset.hpp"
@@ -78,7 +80,7 @@ namespace rubinius {
     llvm::Module* module_;
     llvm::Function* function_;
 
-    llvm::Value* vm_;
+    llvm::Value* state_;
     llvm::Value* call_frame_;
 
     llvm::Value* zero_;
@@ -140,7 +142,7 @@ namespace rubinius {
       CallFrameTy = ptr_type("CallFrame");
 
       Function::arg_iterator input = function_->arg_begin();
-      vm_ = input++;
+      state_ = input++;
 
       builder_.SetInsertPoint(start);
     }
@@ -236,12 +238,12 @@ namespace rubinius {
       return &method_info_;
     }
 
-    LLVMState* state() {
+    LLVMState* llvm_state() {
       return ls_;
     }
 
-    Value* vm() {
-      return vm_;
+    Value* state() {
+      return state_;
     }
 
     Function* function() {
@@ -287,7 +289,7 @@ namespace rubinius {
       return b().CreateBitCast(rec, ptr_type("Object"), "downcast");
     }
 
-    Value* check_type_bits(Value* obj, int type, const char* name = "is_type") {
+    Value* object_flags(Value* obj) {
       Value* word_idx[] = {
         zero_,
         zero_,
@@ -299,18 +301,17 @@ namespace rubinius {
         obj = b().CreateBitCast(obj, ObjType);
       }
 
-      // This checks 2 things, not just the type bits. It also checks
-      // that the inflated flag is 0, because if it's a 1, then the type
-      // bits have nothing to do with the type.
-      //
-      // We don't handle checking the type bits in the inflated header also.
-
       Value* gep = create_gep(obj, word_idx, 4, "word_pos");
       Value* word = create_load(gep, "flags");
-      Value* flags = b().CreatePtrToInt(word, ls_->Int64Ty, "word2flags");
+      return b().CreatePtrToInt(word, ls_->Int64Ty, "word2flags");
+    }
+
+    Value* check_type_bits(Value* obj, int type, const char* name = "is_type") {
+
+      Value* flags = object_flags(obj);
 
       // 9 bits worth of mask
-      Value* mask = ConstantInt::get(ls_->Int64Ty, ((1 << 9) - 1));
+      Value* mask = ConstantInt::get(ls_->Int64Ty, ((1 << (OBJECT_FLAGS_OBJ_TYPE + 1)) - 1));
       Value* obj_type = b().CreateAnd(flags, mask, "mask");
 
       // Compare all 9 bits.
@@ -325,6 +326,119 @@ namespace rubinius {
 
       Value* lint = create_and(cast_int(obj), mask, "masked");
       return create_equal(lint, zero, "is_reference");
+    }
+
+    Value* check_header_bit(Value* obj, BasicBlock* failure, int bit) {
+      Value* is_ref = check_is_reference(obj);
+      BasicBlock* done = new_block("done");
+      BasicBlock* cont = new_block("reference");
+      BasicBlock* check_inflated = new_block("check_inflated");
+
+      create_conditional_branch(cont, failure, is_ref);
+
+      set_block(cont);
+
+      Value* flags = object_flags(obj);
+      Value* mask = ConstantInt::get(ls_->Int64Ty, ((1 << bit) +
+                                                    (1 << OBJECT_FLAGS_INFLATED)));
+
+      Value* bit_obj = b().CreateAnd(flags, mask, "mask");
+
+      Value* not_bit  = b().CreateICmpEQ(bit_obj, ConstantInt::get(ls_->Int64Ty, 0), "not_bit");
+
+      create_conditional_branch(done, check_inflated, not_bit);
+
+      set_block(check_inflated);
+
+      Value* bit_tag = ConstantInt::get(ls_->Int64Ty, 1 << bit);
+      Value* is_bit  = b().CreateICmpEQ(bit_obj, bit_tag, "is_bit");
+
+      create_conditional_branch(failure, done, is_bit);
+
+      set_block(done);
+
+      PHINode* phi = b().CreatePHI(ObjType, 2, "equal_value");
+      phi->addIncoming(constant(cTrue), check_inflated);
+      phi->addIncoming(constant(cFalse), cont);
+
+      return phi;
+    }
+
+    Value* get_header_value(Value* recv, int header, const char* fallback) {
+      BasicBlock* done = new_block("done");
+      BasicBlock* check = new_block("check");
+      BasicBlock* failure = new_block("failure");
+
+      create_branch(check);
+      set_block(check);
+
+      Value* flag_res = check_header_bit(recv, failure, header);
+
+      check = current_block();
+
+      create_branch(done);
+      set_block(failure);
+
+      Signature sig(ls_, "Object");
+      sig << "State";
+      sig << "Object";
+
+      Function* func = sig.function(fallback);
+      func->setDoesNotAlias(0); // return value
+
+      Value* call_args[] = { state_, recv };
+      CallInst* call_res = sig.call(fallback, call_args, 2, "result", b());
+      call_res->setOnlyReadsMemory();
+      call_res->setDoesNotThrow();
+
+      create_branch(done);
+      set_block(done);
+
+      PHINode* res = b().CreatePHI(ObjType, 2, "result");
+      res->addIncoming(flag_res, check);
+      res->addIncoming(call_res, failure);
+
+      return res;
+    }
+
+    void check_is_frozen(Value* obj) {
+
+      Value* is_ref = check_is_reference(obj);
+      BasicBlock* done = new_block("done");
+      BasicBlock* cont = new_block("reference");
+      BasicBlock* failure = new_block("use_call");
+
+      create_conditional_branch(cont, done, is_ref);
+
+      set_block(cont);
+
+      Value* flags = object_flags(obj);
+      Value* mask = ConstantInt::get(ls_->Int64Ty, ((1 << OBJECT_FLAGS_FROZEN) +
+                                                    (1 << OBJECT_FLAGS_INFLATED)));
+
+      Value* frozen_obj = b().CreateAnd(flags, mask, "mask");
+
+      Value* not_frozen  = b().CreateICmpEQ(frozen_obj, ConstantInt::get(ls_->Int64Ty, 0), "not_frozen");
+      create_conditional_branch(done, failure, not_frozen);
+
+      set_block(failure);
+
+      Signature sig(ls_, "Object");
+
+      sig << "State";
+      sig << "CallFrame";
+      sig << "Object";
+
+      Value* call_args[] = { state_, call_frame_, stack_top() };
+
+      CallInst* res = sig.call("rbx_check_frozen", call_args, 3, "", b());
+      res->setOnlyReadsMemory();
+      res->setDoesNotThrow();
+
+      check_for_exception(res, false);
+
+      b().CreateBr(done);
+      set_block(done);
     }
 
     Value* reference_class(Value* obj) {
@@ -361,6 +475,18 @@ namespace rubinius {
 
     Value* check_is_tuple(Value* obj) {
       return check_type_bits(obj, rubinius::Tuple::type);
+    }
+
+    Value* check_is_bytearray(Value* obj) {
+      return check_type_bits(obj, rubinius::ByteArray::type);
+    }
+
+    Value* check_is_matchdata(Value* obj) {
+      return check_type_bits(obj, rubinius::MatchData::type);
+    }
+
+    Value* check_is_regexp(Value* obj) {
+      return check_type_bits(obj, rubinius::Regexp::type);
     }
 
     void verify_guard(Value* cmp, BasicBlock* failure) {
@@ -724,7 +850,7 @@ namespace rubinius {
       sig << "State";
       sig << "StackVariables";
 
-      Value* call_args[] = { vm_, vars };
+      Value* call_args[] = { state_, vars };
 
       sig.call("rbx_flush_scope", call_args, 2, "", b());
 
@@ -887,11 +1013,14 @@ namespace rubinius {
           module_->getOrInsertFunction("rbx_create_bignum", ft));
 
       Value* call_args[] = {
-        vm_,
+        state_,
         arg
       };
 
-      return b().CreateCall(func, call_args, "big_value");
+      CallInst* result = b().CreateCall(func, call_args, "big_value");
+      result->setOnlyReadsMemory();
+      result->setDoesNotThrow();
+      return result;
     }
 
     // Tuple access
@@ -914,6 +1043,27 @@ namespace rubinius {
 
       Value* ptr_size = ConstantInt::get(NativeIntTy, sizeof(Object*));
       return b().CreateSDiv(body_bytes, ptr_size);
+    }
+
+    // Tuple access
+    Value* get_bytearray_size(Value* bytearray) {
+      Value* idx[] = {
+        zero_,
+        cint(offset::ByteArray::full_size)
+      };
+
+      Value* pos = create_gep(bytearray, idx, 2, "bytearray_size_pos");
+
+      Value* bytes = b().CreateIntCast(
+                        create_load(pos, "bytearray_size"),
+                        NativeIntTy,
+                        true,
+                        "to_native_int");
+
+      Value* header = ConstantInt::get(NativeIntTy, sizeof(ByteArray));
+      Value* body_bytes = b().CreateSub(bytes, header);
+
+      return body_bytes;
     }
 
     // Object access
@@ -1004,7 +1154,7 @@ namespace rubinius {
         obj = b().CreateBitCast(obj, ObjType, "casted");
       }
 
-      Value* call_args[] = { vm_, obj, val };
+      Value* call_args[] = { state_, obj, val };
       wb.call("rbx_write_barrier", call_args, 3, "", b());
     }
 

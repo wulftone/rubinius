@@ -144,7 +144,6 @@ namespace :build do
   task :llvm do
     if Rubinius::BUILD_CONFIG[:llvm] == :svn
       unless File.file?("vendor/llvm/Release/bin/llvm-config")
-        ENV["REQUIRES_RTTI"] = "1"
         Dir.chdir "vendor/llvm" do
           host = Rubinius::BUILD_CONFIG[:host]
           llvm_config_flags = "--build=#{host} --host=#{host} " \
@@ -170,6 +169,7 @@ namespace :build do
                      stage:tooling
                      stage:kernel
                      kernel:build
+                     extensions:melbourne_build_clean
                      stage:runtime
                      stage:documentation
                      stage:manpages
@@ -190,7 +190,7 @@ namespace :build do
     # Generate the .rb files from lib/*.rb.ffi
     task :preprocessor => FFI_PREPROCESSABLES
 
-    FFI::FileProcessor::Task.new FFI_PREPROCESSABLES
+    Rubinius::FFI::FileProcessor::Task.new FFI_PREPROCESSABLES
 
   end
 end

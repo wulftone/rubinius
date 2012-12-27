@@ -1,5 +1,6 @@
 # -*- encoding: us-ascii -*-
 
+module Rubinius
 module FFI
 
   module Library
@@ -18,3 +19,7 @@ module FFI
   end
 
 end
+end
+
+# Temporarily still map the global FFI constant
+FFI = Rubinius::FFI
