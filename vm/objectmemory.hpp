@@ -167,23 +167,14 @@ namespace rubinius {
     /// True if finalizers are currently being run.
     bool running_finalizers_;
 
-    /// True if finalizers were added in this GC cycle.
-    bool added_finalizers_;
-
-    /// A mutex which protects running the finalizers
+    /// A mutex which protects registering finalizers
     rubinius::Mutex finalizer_lock_;
-
-    /// A condition variable used to control access to
-    /// to_finalize_
-    utilities::thread::Condition finalizer_var_;
 
     /// Mutex used to manage lock contention
     utilities::thread::Mutex contention_lock_;
 
     /// Condition variable used to manage lock contention
     utilities::thread::Condition contention_var_;
-
-    TypedRoot<Thread*> finalizer_thread_;
 
     SharedState& shared_;
 
@@ -275,14 +266,35 @@ namespace rubinius {
 
     void on_fork(STATE);
 
+    Object* new_object_typed_dirty(STATE, Class* cls, size_t bytes, object_type type);
     Object* new_object_typed(STATE, Class* cls, size_t bytes, object_type type);
+
+    Object* new_object_typed_mature_dirty(STATE, Class* cls, size_t bytes, object_type type);
     Object* new_object_typed_mature(STATE, Class* cls, size_t bytes, object_type type);
+
+    Object* new_object_typed_enduring_dirty(STATE, Class* cls, size_t bytes, object_type type);
     Object* new_object_typed_enduring(STATE, Class* cls, size_t bytes, object_type type);
+
+    template <class T>
+      T* new_object_bytes_dirty(STATE, Class* cls, size_t& bytes) {
+        bytes = ObjectHeader::align(sizeof(T) + bytes);
+        T* obj = static_cast<T*>(new_object_typed_dirty(state, cls, bytes, T::type));
+
+        return obj;
+      }
 
     template <class T>
       T* new_object_bytes(STATE, Class* cls, size_t& bytes) {
         bytes = ObjectHeader::align(sizeof(T) + bytes);
         T* obj = static_cast<T*>(new_object_typed(state, cls, bytes, T::type));
+
+        return obj;
+      }
+
+    template <class T>
+      T* new_object_bytes_mature_dirty(STATE, Class* cls, size_t& bytes) {
+        bytes = ObjectHeader::align(sizeof(T) + bytes);
+        T* obj = static_cast<T*>(new_object_typed_mature_dirty(state, cls, bytes, T::type));
 
         return obj;
       }
@@ -340,9 +352,7 @@ namespace rubinius {
 
     void needs_finalization(Object* obj, FinalizerFunction func);
     void set_ruby_finalizer(Object* obj, Object* fin);
-    void run_finalizers(STATE, CallFrame* call_frame);
     void run_all_finalizers(STATE);
-    void run_all_io_finalizers(STATE);
 
     void add_to_finalize(FinalizeObject* fi);
 
@@ -362,9 +372,6 @@ namespace rubinius {
     InflatedHeader* inflate_header(STATE, ObjectHeader* obj);
     void inflate_for_id(STATE, ObjectHeader* obj, uint32_t id);
     void inflate_for_handle(STATE, ObjectHeader* obj, capi::Handle* handle);
-
-    void in_finalizer_thread(STATE);
-    void start_finalizer_thread(STATE);
 
     /// This only has one use! Don't use it!
     Object* allocate_object_raw(size_t bytes);

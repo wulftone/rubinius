@@ -61,7 +61,7 @@ namespace rubinius {
   }
 
   CompiledCode* CompiledCode::dup(STATE) {
-    CompiledCode* code = CompiledCode::create(state);
+    CompiledCode* code = state->new_object_dirty<CompiledCode>(G(compiled_code));
     code->copy_object(state, this);
 
     code->set_executor(CompiledCode::default_executor);
@@ -301,6 +301,12 @@ namespace rubinius {
 
   String* CompiledCode::full_name(STATE) {
     return name_->to_str(state);
+  }
+
+  bool CompiledCode::kernel_method(STATE) {
+    std::string s = file()->cpp_str(state);
+    if(s.size() >= 7 && strncmp(s.data(), "kernel/", 7) == 0) return true;
+    return false;
   }
 
   void CompiledCode::set_interpreter(executor interp) {

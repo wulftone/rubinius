@@ -63,6 +63,11 @@ namespace rubinius {
         return static_cast<T*>(vm_->new_object_typed(cls, sizeof(T), T::type));
       }
 
+    template <class T>
+      T* new_object_dirty(Class *cls) {
+        return static_cast<T*>(vm_->new_object_typed_dirty(cls, sizeof(T), T::type));
+      }
+
     ThreadState* thread_state() {
       return vm_->thread_state();
     }
@@ -90,13 +95,9 @@ namespace rubinius {
 
     bool check_stack(CallFrame* call_frame, void* end) {
       // @TODO assumes stack growth direction
-      if(vm_->stack_limit_ == vm_->stack_start_) {
-        vm_->reset_stack_limit();
-      } else {
-        if(unlikely(reinterpret_cast<uintptr_t>(end) < vm_->stack_limit_)) {
-          raise_stack_error(call_frame);
-          return false;
-        }
+      if(unlikely(vm_->detect_stack_condition(end))) {
+        raise_stack_error(call_frame);
+        return false;
       }
       return true;
     }

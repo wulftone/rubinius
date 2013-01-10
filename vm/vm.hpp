@@ -207,10 +207,6 @@ namespace rubinius {
       set_stack_bounds(root_stack_start_, root_stack_size_);
     }
 
-    void get_attention() {
-      stack_limit_ = stack_start_;
-    }
-
     bool detect_stack_condition(void* end) {
       // @TODO assumes stack growth direction
       return reinterpret_cast<uintptr_t>(end) < stack_limit_;
@@ -319,6 +315,7 @@ namespace rubinius {
 
     void set_current_fiber(Fiber* fib);
 
+    Object* new_object_typed_dirty(Class* cls, size_t bytes, object_type type);
     Object* new_object_typed(Class* cls, size_t bytes, object_type type);
     Object* new_object_typed_mature(Class* cls, size_t bytes, object_type type);
 
@@ -328,13 +325,14 @@ namespace rubinius {
       }
 
     template <class T>
-      T* new_struct(Class* cls, size_t bytes = 0) {
-        return static_cast<T*>(new_object_typed(cls, sizeof(T) + bytes, T::type));
+      T* new_object_mature(Class *cls) {
+        return static_cast<T*>(new_object_typed_mature(cls, sizeof(T), T::type));
       }
 
     template <class T>
-      T* new_object_mature(Class *cls) {
-        return static_cast<T*>(new_object_typed_mature(cls, sizeof(T), T::type));
+      T* new_object_bytes_dirty(Class* cls, size_t& bytes) {
+        bytes = ObjectHeader::align(sizeof(T) + bytes);
+        return static_cast<T*>(new_object_typed_dirty(cls, bytes, T::type));
       }
 
     template <class T>

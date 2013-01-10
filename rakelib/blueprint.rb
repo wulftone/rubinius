@@ -16,8 +16,10 @@ Daedalus.blueprint do |i|
   gcc.cflags << "-mno-omit-leaf-frame-pointer" if Rubinius::BUILD_CONFIG[:cc] == "clang"
 
   # We don't need RTTI information, so disable it. This makes it possible
-  # to link Rubinius to an LLVM build with RTTI disabled.
-  gcc.cxxflags << "-fno-rtti"
+  # to link Rubinius to an LLVM build with RTTI disabled. We also enable
+  # visibility-inlines-hidden for slightly smaller code size and prevents
+  # warnings when LLVM is also built with this flag.
+  gcc.cxxflags << "-fno-rtti -fvisibility-inlines-hidden"
 
   gcc.cflags << "-Wno-unused-function"
   gcc.cflags << "-g -Werror"
@@ -120,6 +122,8 @@ Daedalus.blueprint do |i|
       x.command make
     end
   end
+  gcc.add_library ltm
+  files << ltm
 
   oniguruma = i.library_group "vendor/oniguruma" do |g|
     g.depends_on "config.h", "configure"
@@ -151,6 +155,7 @@ Daedalus.blueprint do |i|
     g.shared_library "enc/trans/utf8_mac"
     g.shared_library "enc/trans/utf_16_32"
   end
+  files << oniguruma
 
   gdtoa = i.external_lib "vendor/libgdtoa" do |l|
     l.cflags = ["-Ivendor/libgdtoa"]
@@ -159,6 +164,8 @@ Daedalus.blueprint do |i|
       x.command make
     end
   end
+  gcc.add_library gdtoa
+  files << gdtoa
 
   ffi = i.external_lib "vendor/libffi" do |l|
     l.cflags = ["-Ivendor/libffi/include"]
@@ -168,6 +175,8 @@ Daedalus.blueprint do |i|
       x.command make
     end
   end
+  gcc.add_library ffi
+  files << ffi
 
   udis = i.external_lib "vendor/udis86" do |l|
     l.cflags = ["-Ivendor/udis86"]
@@ -179,6 +188,8 @@ Daedalus.blueprint do |i|
       x.command make
     end
   end
+  gcc.add_library udis
+  files << udis
 
   if Rubinius::BUILD_CONFIG[:vendor_zlib]
     zlib = i.external_lib "vendor/zlib" do |l|
@@ -196,6 +207,23 @@ Daedalus.blueprint do |i|
         end
       end
     end
+    gcc.add_library zlib
+    files << zlib
+  end
+
+  if Rubinius::BUILD_CONFIG[:windows]
+    winp = i.external_lib "vendor/winpthreads" do |l|
+      l.cflags = ["-Ivendor/winpthreads/include"]
+      l.objects = [l.file("libpthread.a")]
+      l.to_build do |x|
+        x.command "sh -c ./configure" unless File.exists?("Makefile")
+        x.command make
+      end
+    end
+
+    gcc.add_library winp
+
+    files << winp
   end
 
   case Rubinius::BUILD_CONFIG[:llvm]
@@ -244,37 +272,10 @@ Daedalus.blueprint do |i|
     raise "get out"
   end
 
-  gcc.add_library zlib if Rubinius::BUILD_CONFIG[:vendor_zlib]
-  gcc.add_library udis
-  gcc.add_library ffi
-  gcc.add_library gdtoa
-  gcc.add_library ltm
 
   Rubinius::BUILD_CONFIG[:include_dirs].each do |path|
     gcc.cflags << "-I#{path} " if File.exists? path
   end
-
-  if Rubinius::BUILD_CONFIG[:windows]
-    winp = i.external_lib "vendor/winpthreads" do |l|
-      l.cflags = ["-Ivendor/winpthreads/include"]
-      l.objects = [l.file("libpthread.a")]
-      l.to_build do |x|
-        x.command "sh -c ./configure" unless File.exists?("Makefile")
-        x.command make
-      end
-    end
-
-    gcc.add_library winp
-
-    files << winp
-  end
-
-  files << zlib if Rubinius::BUILD_CONFIG[:vendor_zlib]
-  files << udis
-  files << ffi
-  files << gdtoa
-  files << oniguruma
-  files << ltm
 
   cli = files.dup
   cli << i.source_file("vm/drivers/cli.cpp")

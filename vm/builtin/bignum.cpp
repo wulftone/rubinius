@@ -233,7 +233,7 @@ namespace rubinius {
   }
 
   Bignum* Bignum::create(STATE) {
-    Bignum* o = state->vm()->new_struct<Bignum>(G(bignum));
+    Bignum* o = state->new_object<Bignum>(G(bignum));
     mp_init_managed(state, o->mp_val());
     return o;
   }
@@ -999,7 +999,7 @@ namespace rubinius {
 
     int sz = 0;
     int digits;
-    mp_radix_size(state, self, b, &sz);
+    mp_radix_size(self, b, &sz);
     if(sz == 0) {
       Exception::runtime_error(state, "couldn't convert bignum to string");
     }

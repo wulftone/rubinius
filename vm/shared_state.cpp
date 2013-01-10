@@ -33,6 +33,7 @@ namespace rubinius {
     : initialized_(false)
     , auxiliary_threads_(0)
     , signal_handler_(0)
+    , finalizer_handler_(0)
     , global_handles_(new capi::Handles)
     , global_serial_(0)
     , world_(new WorldState)
@@ -82,6 +83,12 @@ namespace rubinius {
     if(agent_) {
       delete agent_;
     }
+
+    for(std::list<capi::GlobalHandle*>::iterator i = global_handle_locations_.begin();
+          i != global_handle_locations_.end(); ++i) {
+      delete *i;
+    }
+    global_handle_locations_.clear();
 
     delete global_handles_;
     delete tool_broker_;

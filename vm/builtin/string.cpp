@@ -782,7 +782,7 @@ namespace rubinius {
       }
     }
 
-    String* so = state->new_object<String>(cls);
+    String* so = state->new_object_dirty<String>(cls);
 
     so->copy_object(state, this);
     so->shared(state, cTrue);
@@ -863,7 +863,6 @@ namespace rubinius {
     byte_address()[new_size] = 0;
 
     num_bytes(state, Fixnum::from(new_size));
-    num_chars(state, nil<Fixnum>());
     hash_value(state, nil<Fixnum>());
 
     return this;
@@ -895,7 +894,6 @@ namespace rubinius {
     // is, clamp it.
     if(num_bytes()->to_native() > sz) {
       num_bytes(state, count);
-      num_chars(state, nil<Fixnum>());
     }
 
     return this;
@@ -980,6 +978,7 @@ namespace rubinius {
     }
 
     if(lim > 0 && byte_size() > lim) {
+      unshare(state);
       num_bytes(state, Fixnum::from(lim));
       byte_address()[byte_size()] = 0;
     }
@@ -1011,7 +1010,6 @@ namespace rubinius {
     }
 
     num_bytes(state, Fixnum::from(new_size - 1));
-    num_chars(state, nil<Fixnum>());
     return start + replace_length;
   }
 
@@ -1706,9 +1704,12 @@ namespace rubinius {
       for(i = 0; i < k && p < e; i++) {
         int c = Encoding::precise_mbclen(p, e, enc);
 
-        if(!ONIGENC_MBCLEN_CHARFOUND_P(c)) return nil<Fixnum>();
-
-        p += ONIGENC_MBCLEN_CHARFOUND_LEN(c);
+        // If it's an invalid byte, just treat it as a single byte
+        if(!ONIGENC_MBCLEN_CHARFOUND_P(c)) {
+          ++p;
+        } else {
+          p += ONIGENC_MBCLEN_CHARFOUND_LEN(c);
+        }
       }
 
       if(i < k) {
