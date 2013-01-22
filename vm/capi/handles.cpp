@@ -33,7 +33,11 @@ namespace rubinius {
     }
 
     Handle* Handles::find_index(STATE, uintptr_t index) {
-      return allocator_->from_index(index);
+      Handle* handle = allocator_->from_index(index);
+
+      assert(validate(handle));
+
+      return handle;
     }
 
     bool Handles::validate(Handle* handle) {
@@ -55,7 +59,6 @@ namespace rubinius {
     }
 
     void Handles::deallocate_handles(std::list<Handle*>* cached, int mark, BakerGC* young) {
-
       std::vector<bool> chunk_marks(allocator_->chunks_.size(), false);
 
       for(std::vector<int>::size_type i = 0; i < allocator_->chunks_.size(); ++i) {
@@ -78,7 +81,6 @@ namespace rubinius {
 
           if(young) {
             if(obj->young_object_p()) {
-
               // A weakref pointing to a valid young object
               //
               // TODO this only works because we run prune_handles right after
@@ -111,6 +113,7 @@ namespace rubinius {
       // Cleanup cached handles
       for(std::list<Handle*>::iterator it = cached->begin(); it != cached->end();) {
         Handle* handle = *it;
+
         if(handle->in_use_p()) {
           ++it;
         } else {

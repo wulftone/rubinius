@@ -32,7 +32,6 @@ namespace rubinius {
    *             this mark will be retained.
    */
   void InflatedHeaders::deallocate_headers(int mark) {
-
     std::vector<bool> chunk_marks(allocator_->chunks_.size(), false);
     for(std::vector<int>::size_type i = 0; i < allocator_->chunks_.size(); ++i) {
       InflatedHeader* chunk = allocator_->chunks_[i];
@@ -40,11 +39,12 @@ namespace rubinius {
       for(size_t j = 0; j < allocator_->cChunkSize; j++) {
         InflatedHeader* header = &chunk[j];
 
-        if(header->marked_p(mark)) {
-          chunk_marks[i] = true;
-          break;
-        } else {
-          header->clear();
+        if(header->in_use_p()) {
+          if(header->marked_p(mark)) {
+            chunk_marks[i] = true;
+          } else {
+            header->clear();
+          }
         }
       }
     }

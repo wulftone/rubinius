@@ -31,8 +31,9 @@
 #include <execinfo.h>
 #endif
 
+#include "gc/finalize.hpp"
+
 #include "signal.hpp"
-#include "finalizer.hpp"
 #include "object_utils.hpp"
 
 #include "inline_cache.hpp"
@@ -619,11 +620,12 @@ namespace rubinius {
       shared->auxiliary_threads()->shutdown(state);
     }
 
+    shared->finalizer_handler()->finish(state, gct);
+
     // Hold everyone.
     while(!state->stop_the_world()) {
       state->checkpoint(gct, 0);
     }
-    shared->om->run_all_finalizers(state);
 
     NativeMethod::cleanup_thread(state);
   }
@@ -740,6 +742,7 @@ namespace rubinius {
 
   std::string Environment::executable_name() {
     char name[PATH_MAX];
+    memset(name, 0, PATH_MAX);
 
 #ifdef __APPLE__
     uint32_t size = PATH_MAX;
@@ -878,6 +881,8 @@ namespace rubinius {
 
     load_platform_conf(runtime);
     boot_vm();
+    start_finalizer();
+
     load_argv(argc_, argv_);
 
     state->vm()->initialize_config();
@@ -897,9 +902,9 @@ namespace rubinius {
                            runtime.c_str(), runtime.size()));
 
     load_kernel(runtime);
+    shared->finalizer_handler()->start_thread(state);
 
     start_signals();
-    start_finalizer();
     run_file(runtime + "/loader.rbc");
 
     state->vm()->thread_state()->clear();

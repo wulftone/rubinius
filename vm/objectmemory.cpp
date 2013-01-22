@@ -6,7 +6,6 @@
 #include "config.h"
 #include "vm.hpp"
 #include "objectmemory.hpp"
-#include "finalizer.hpp"
 #include "gc/marksweep.hpp"
 #include "gc/baker.hpp"
 #include "gc/immix.hpp"
@@ -54,7 +53,6 @@ namespace rubinius {
     , code_manager_(&state->shared)
     , allow_gc_(true)
     , slab_size_(4096)
-    , running_finalizers_(false)
     , shared_(state->shared)
 
     , collect_young_now(false)
@@ -104,7 +102,6 @@ namespace rubinius {
   void ObjectMemory::on_fork(STATE) {
     lock_init(state->vm());
     contention_lock_.init();
-    finalizer_lock_.init();
   }
 
   void ObjectMemory::assign_object_id(STATE, Object* obj) {
@@ -239,8 +236,8 @@ step1:
         }
 
         // Someone is interrupting us trying to lock.
-        if(interrupt && state->vm()->check_local_interrupts) {
-          state->vm()->check_local_interrupts = false;
+        if(interrupt && state->check_local_interrupts()) {
+          state->vm()->clear_check_local_interrupts();
 
           if(!state->vm()->interrupted_exception()->nil_p()) {
             if(cDebugThreading) {
@@ -463,7 +460,7 @@ step1:
     if(obj->young_object_p()) {
       return young_->validate_object(obj) == cValid;
     } else if(obj->mature_object_p()) {
-      return true;
+      return immix_->validate_object(obj) == cInImmix;
     } else {
       return false;
     }
@@ -505,6 +502,8 @@ step1:
     // Ok, everyone in stopped! LET'S GC!
 
     SYNC(state);
+
+    state->shared().finalizer_handler()->start_collection(state);
 
     if(cDebugThreading) {
       std::cerr << std::endl << "[" << state
@@ -578,13 +577,10 @@ step1:
       }
     }
 
+    state->shared().finalizer_handler()->finish_collection(state);
     state->restart_world();
 
     UNSYNC;
-    FinalizerHandler* finalizer = state->shared().finalizer_handler();
-    if(finalizer) {
-      finalizer->signal();
-    }
   }
 
   void ObjectMemory::collect_young(GCData& data, YoungCollectStats* stats) {
@@ -913,100 +909,13 @@ step1:
   }
 
   void ObjectMemory::needs_finalization(Object* obj, FinalizerFunction func) {
-    SCOPE_LOCK(ManagedThread::current(), finalizer_lock_);
-
-    FinalizeObject fi;
-    fi.object = obj;
-    fi.status = FinalizeObject::eLive;
-    fi.finalizer = func;
-
-    // Makes a copy of fi.
-    finalize_.push_front(fi);
+    if(FinalizerHandler* fh = shared_.finalizer_handler()) {
+      fh->record(obj, func);
+    }
   }
 
-  void ObjectMemory::set_ruby_finalizer(Object* obj, Object* fin) {
-    SCOPE_LOCK(ManagedThread::current(), finalizer_lock_);
-
-    // See if there already one.
-    for(std::list<FinalizeObject>::iterator i = finalize_.begin();
-        i != finalize_.end(); ++i)
-    {
-      if(i->object == obj) {
-        if(fin->nil_p()) {
-          finalize_.erase(i);
-        } else {
-          i->ruby_finalizer = fin;
-        }
-        return;
-      }
-    }
-
-    // Adding a nil finalizer is only used to delete an
-    // existing finalizer, which we apparently don't have
-    // if we get here.
-    if(fin->nil_p()) {
-      return;
-    }
-
-    // Ok, create it.
-
-    FinalizeObject fi;
-    fi.object = obj;
-    fi.status = FinalizeObject::eLive;
-
-    // Rubinius specific API. If the finalizer is the object, we're going to send
-    // the object __finalize__. We mark that the user wants this by putting cTrue
-    // as the ruby_finalizer.
-    if(obj == fin) {
-      fi.ruby_finalizer = cTrue;
-    } else {
-      fi.ruby_finalizer = fin;
-    }
-
-    // Makes a copy of fi.
-    finalize_.push_front(fi);
-  }
-
-  void ObjectMemory::add_to_finalize(FinalizeObject* fi) {
-    shared_.finalizer_handler()->schedule(fi);
-  }
-
-  void ObjectMemory::run_all_finalizers(STATE) {
-    {
-      SCOPE_LOCK(state->vm(), finalizer_lock_);
-      if(running_finalizers_) return;
-      running_finalizers_ = true;
-    }
-
-    for(std::list<FinalizeObject>::iterator i = finalize_.begin();
-        i != finalize_.end(); )
-    {
-      FinalizeObject& fi = *i;
-
-      // Only finalize things that haven't been finalized.
-      if(fi.status != FinalizeObject::eFinalized) {
-        if(fi.ruby_finalizer) {
-          // Rubinius specific code. If the finalizer is cTrue, then
-          // send the object the finalize message
-          if(fi.ruby_finalizer == cTrue) {
-            fi.object->send(state, 0, state->symbol("__finalize__"));
-          } else {
-            Array* ary = Array::create(state, 1);
-            ary->set(state, 0, fi.object->id(state));
-            fi.ruby_finalizer->send(state, 0, G(sym_call), ary);
-          }
-        }
-        if(fi.finalizer) {
-          (*fi.finalizer)(state, fi.object);
-        }
-      }
-
-      fi.status = FinalizeObject::eFinalized;
-
-      i = finalize_.erase(i);
-    }
-
-    running_finalizers_ = false;
+  void ObjectMemory::set_ruby_finalizer(Object* obj, Object* finalizer) {
+    shared_.finalizer_handler()->set_ruby_finalizer(obj, finalizer);
   }
 
   size_t& ObjectMemory::loe_usage() {
