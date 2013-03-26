@@ -1042,7 +1042,17 @@ class Date
 	:_parse_jis, :_parse_vms, :_parse_sla, :_parse_dot,
 	:_parse_year, :_parse_mon, :_parse_mday, :_parse_ddd
 
-  def self._parse(str, comp=true, return_bag=false)
+  # Fix for MRI _parse arity.  If someone aliases and overwrites _parse, they'll
+  # be expecting the MRI arity of 1..2
+  #
+  # http://ruby-doc.org/stdlib-1.9.3/libdoc/date/rdoc/Date.html#method-c-_parse
+  def self._parse(str, comp=true)
+    self.__parse(str, comp)
+  end
+
+  # Time.parse uses the return_bag, thus the different arity than the regular
+  # self._parse method
+  def self.__parse(str, comp=true, return_bag=false)
     str = str.dup
 
     e = Format::Bag.new
